@@ -1,0 +1,88 @@
+// Generador de ZIP sin compresión (método "store"), sin dependencias.
+// El audio WAV apenas se comprime, así que "store" es rápido y suficiente.
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+export function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function dosTime(d) {
+  return {
+    time: (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2),
+    date: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(),
+  };
+}
+
+/** entries: [{ name, data: Uint8Array | string | Blob }] → Blob (application/zip) */
+export async function makeZip(entries, onProgress) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const { time, date } = dosTime(new Date());
+  let i = 0;
+  for (const e of entries) {
+    let data = e.data, crc, size;
+    if (data instanceof Blob) {
+      // se calcula el CRC y se conserva el Blob original (no se duplica el audio en memoria)
+      const bytes = new Uint8Array(await data.arrayBuffer());
+      crc = crc32(bytes); size = bytes.length;
+    } else {
+      if (typeof data === 'string') data = enc.encode(data);
+      else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+      crc = crc32(data); size = data.length;
+    }
+    const nameBytes = enc.encode(e.name);
+
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0x0800, true); // nombres en UTF-8
+    lh.setUint16(8, 0, true);
+    lh.setUint16(10, time, true);
+    lh.setUint16(12, date, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true);
+    lh.setUint32(22, size, true);
+    lh.setUint16(26, nameBytes.length, true);
+    lh.setUint16(28, 0, true);
+    parts.push(lh.buffer, nameBytes, data);
+
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true);
+    ch.setUint16(4, 20, true);
+    ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true);
+    ch.setUint16(10, 0, true);
+    ch.setUint16(12, time, true);
+    ch.setUint16(14, date, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, size, true);
+    ch.setUint32(24, size, true);
+    ch.setUint16(28, nameBytes.length, true);
+    ch.setUint32(42, offset, true);
+    central.push(ch.buffer, nameBytes);
+
+    offset += 30 + nameBytes.length + size;
+    if (onProgress) onProgress(++i / entries.length);
+  }
+  const centralSize = central.reduce((a, p) => a + (p.byteLength ?? p.length), 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
+}
