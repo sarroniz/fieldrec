@@ -11,13 +11,14 @@ A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitatio
 - **PowerPoint and PDF import:** slides from a `.pptx` are reproduced in the browser (navigation buttons hidden, images optimized); a PDF gives a pixel-exact copy.
 - **Built-in Guide** (home screen → Guide): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
 
-> **Prototype (v0.4.1).** Test it on your own iPad before using it with participants.
+> **Prototype (v0.4.2).** Test it on your own iPad before using it with participants.
 
 ---
 
 ## Publish on GitHub Pages
 
 1. Create a repository (e.g. `fieldrec`) and upload **everything in this folder** to its root, including the `.nojekyll` file.
+   > **`.nojekyll` is a hidden file.** On a Mac, Finder doesn't show files whose name starts with a dot (press **⌘ ⇧ .** to show them), so it's easy to leave it out when dragging files into GitHub. Without it, GitHub Pages runs Jekyll, which turns Markdown files into web pages: any Markdown protocol bundled in `protocols/` then fails with “not found (HTTP 404)”. If it's missing, create it on GitHub: **Add file → Create new file**, name it `.nojekyll`, leave it empty and commit. (The bundled example uses `protocol.json`, which works either way.)
 2. In the repository: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, branch `main`, folder `/ (root)`.
 3. About a minute later it is live at `https://YOUR-USERNAME.github.io/fieldrec/`.
 
@@ -29,7 +30,7 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 2. **Share → Add to Home Screen**.
 3. Always open it from that icon. The first time, it asks for microphone access.
 
-**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.2`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.3`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
 
 ---
 
@@ -134,7 +135,7 @@ vowels,pupa,,
 
 ### Adding protocols
 
-- **Bundled with the website:** create a folder in `protocols/` and add it to `protocols/index.json`. For it to work offline from the start, also add its files to the `SHELL` list in `sw.js`.
+- **Bundled with the website:** create a folder in `protocols/` and add it to `protocols/index.json` (Markdown protocols there need the `.nojekyll` file; a `protocol.json` exported from the editor doesn't). For it to work offline from the start, also add its files to the `SHELL` list in `sw.js`.
 - **Imported on the iPad or a computer:** Protocols → **Import files or .zip**. Three ways:
   1. **A .zip of the protocol folder (recommended).** In the Files app, long-press the folder and choose **Compress**. Subfolders such as `img/` are kept.
   2. **A folder** (the **Import folder** button, computers only).
@@ -211,7 +212,7 @@ Recordings exist **only on the device**, in the browser's storage for this websi
 - Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
 - Deleting a session requires confirming that the export has been saved, and every deletion is logged.
 
-## Known limitations (v0.4.1)
+## Known limitations (v0.4.2)
 
 - Mono only.
 - A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.

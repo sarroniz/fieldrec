@@ -1,13 +1,13 @@
 // Service worker: caches the app and the bundled protocols so it works offline.
 // vendor/pdfjs (PDF import) is cached the first time it is used.
-const CACHE = 'fieldrec-v0.4.1';
+const CACHE = 'fieldrec-v0.4.2';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/guide.js', 'js/editor.js', 'js/pptx.js', 'js/pdf-import.js', 'js/audio.js', 'js/recorder-worklet.js', 'js/wav-worker.js', 'js/dsp.js',
   'js/protocol.js', 'js/db.js', 'js/zip.js', 'js/unzip.js', 'js/textgrid.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'protocols/index.json',
-  'protocols/example-es/protocol.md', 'protocols/example-es/words.csv', 'protocols/example-es/consent.md',
+  'protocols/example-es/protocol.json',
   ...['sol', 'casa', 'arbol', 'luna', 'pez', 'llave', 'historia1', 'historia2', 'historia3'].map((n) => `protocols/example-es/img/${n}.svg`),
 ];
 

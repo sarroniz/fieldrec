@@ -408,6 +408,7 @@ export function guideHTML({ version, storageLine, standalone }) {
     <summary>Troubleshooting</summary>
     <ul>
       <li><b>No microphone access.</b> In iPad Settings, open Safari (<i>Settings → Apps → Safari</i> on recent iPadOS) → <b>Microphone</b> → Ask or Allow. Then reopen Fieldrec.</li>
+      <li><b>A protocol included with the app says “protocol.md not found (HTTP 404)”.</b> The repository is missing the hidden file ${code('.nojekyll')}, so GitHub Pages converted the Markdown file into a web page. On GitHub: <i>Add file → Create new file</i>, name it ${code('.nojekyll')}, leave it empty and commit.</li>
       <li><b>A new version isn’t showing.</b> Reload, or close and reopen the app. The version number is at the bottom of the home screen. GitHub Pages can take about 10 minutes to publish changes.</li>
       <li><b>A PowerPoint slide looks different.</b> Export the presentation as PDF and import the PDF instead (see <a href="#g-pptx" data-jump>From PowerPoint</a>).</li>
       <li><b>Importing a large presentation is slow.</b> Big images are being optimized; it can take a minute. Keep the app open.</li>

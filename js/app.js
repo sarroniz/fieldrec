@@ -7,7 +7,7 @@ import { makeTextGrid } from './textgrid.js';
 import { guideHTML } from './guide.js';
 import { openEditor } from './editor.js';
 
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;            // session in progress
@@ -139,7 +139,14 @@ function sourceFor(entry) {
     const base = new URL('.', mainURL);
     return {
       mainName: decodeURIComponent(mainURL.pathname.split('/').pop()),
-      readText: async (name) => { const r = await fetch(new URL(name, base)); if (!r.ok) throw new Error(`“${name}” not found (HTTP ${r.status})`); return r.text(); },
+      readText: async (name) => {
+        const r = await fetch(new URL(name, base));
+        if (r.status === 404 && /\.(md|markdown)$/i.test(name)) {
+          throw new Error(`“${name}” not found (HTTP 404). GitHub Pages probably converted it into a web page: add an empty file named .nojekyll to the root of the repository (see the README).`);
+        }
+        if (!r.ok) throw new Error(`“${name}” not found (HTTP ${r.status})`);
+        return r.text();
+      },
       resolve: (src) => (isAbs(src) ? src : new URL(src, base).href),
       has: null,
     };

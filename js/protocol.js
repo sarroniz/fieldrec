@@ -217,7 +217,7 @@ export async function parseProtocol(source) {
         continue;
       }
       const md = chunk.join('\n').trim();
-      if (!md) continue;
+      if (!md || !md.replace(/<!--[\s\S]*?-->/g, '').trim()) continue; // empty or comments only
       if (!cur) { cur = newTask({}, protocol.tasks.length); protocol.tasks.push(cur); }
       const idm = md.match(/<!--\s*id\s*:\s*([^>]*?)\s*-->/i);
       const qm = md.match(/<!--\s*(question|pregunta)\s*:\s*([^>]*?)\s*-->/i);

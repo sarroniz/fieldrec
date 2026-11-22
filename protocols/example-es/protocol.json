@@ -1,0 +1,208 @@
+{
+ "fieldrec": 1,
+ "title": "Example protocol (Spanish)",
+ "language": "es",
+ "author": "Santiago Arróniz",
+ "consent": "# Consentimiento informado\n\n**[Researcher note — replace this whole text with your IRB-approved consent form, in the participant's language.]**\n\nTe invitamos a participar en un estudio sobre la variación del español. La sesión dura unos 20 minutos e incluye la lectura de palabras y frases, la descripción de imágenes y una breve conversación.\n\nLas grabaciones se guardan en este dispositivo con un código de participante, sin tu nombre. Puedes dejar la sesión en cualquier momento sin dar explicaciones.\n\nSi tienes preguntas, puedes escribir a la persona responsable del estudio.\n",
+ "tasks": [
+  {
+   "task": "lista_palabras",
+   "label": "Lista de palabras",
+   "preset": "word_list",
+   "recording": "per_token",
+   "randomize": "blocked",
+   "repetitions": 2,
+   "instructions": "Lee en voz alta la frase que aparece en la pantalla, con naturalidad.",
+   "slides": [
+    {
+     "kind": "md",
+     "id": "cada",
+     "label": "cada",
+     "md": "# Digo **cada** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "lado",
+     "label": "lado",
+     "md": "# Digo **lado** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "todo",
+     "label": "todo",
+     "md": "# Digo **todo** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "haba",
+     "label": "haba",
+     "md": "# Digo **haba** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "lobo",
+     "label": "lobo",
+     "md": "# Digo **lobo** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "cabo",
+     "label": "cabo",
+     "md": "# Digo **cabo** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "lago",
+     "label": "lago",
+     "md": "# Digo **lago** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "hago",
+     "label": "hago",
+     "md": "# Digo **hago** otra vez."
+    },
+    {
+     "kind": "md",
+     "id": "soga",
+     "label": "soga",
+     "md": "# Digo **soga** otra vez."
+    }
+   ]
+  },
+  {
+   "task": "lectura",
+   "label": "Lectura",
+   "preset": "reading",
+   "recording": "continuous",
+   "randomize": false,
+   "repetitions": 1,
+   "instructions": "A continuación verás un texto breve. Léelo en voz alta a tu ritmo habitual.",
+   "slides": [
+    {
+     "kind": "md",
+     "id": "parrafo1",
+     "label": "El sábado por la tarde, Begoña bajó al mercado del barrio a comprar uvas, dos barras de pan y un trozo de queso de cabra. Por el camino se encontró con Diego, un amigo de la infancia que había vuelto de Bogotá después de diez años.",
+     "md": "<!-- id: parrafo1 -->\nEl sábado por la tarde, Begoña bajó al mercado del barrio a comprar uvas, dos barras de pan y un trozo de queso de cabra.\n\nPor el camino se encontró con Diego, un amigo de la infancia que había vuelto de Bogotá después de diez años."
+    },
+    {
+     "kind": "md",
+     "id": "parrafo2",
+     "label": "Se sentaron a tomar un café en la plaza y hablaron de todo un poco: del trabajo, de la familia y de lo mucho que había cambiado la ciudad. Cuando quiso darse cuenta, ya era de noche y el mercado estaba cerrado.",
+     "md": "<!-- id: parrafo2 -->\nSe sentaron a tomar un café en la plaza y hablaron de todo un poco: del trabajo, de la familia y de lo mucho que había cambiado la ciudad.\n\nCuando quiso darse cuenta, ya era de noche y el mercado estaba cerrado."
+    }
+   ]
+  },
+  {
+   "task": "denominacion",
+   "label": "Denominación de imágenes",
+   "preset": "picture_naming",
+   "recording": "per_token",
+   "randomize": "blocked",
+   "repetitions": 1,
+   "instructions": "Di en voz alta el nombre de lo que ves en cada imagen.",
+   "slides": [
+    {
+     "kind": "md",
+     "id": "sol",
+     "label": "sol",
+     "md": "![sol](img/sol.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "casa",
+     "label": "casa",
+     "md": "![casa](img/casa.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "arbol",
+     "label": "árbol",
+     "md": "![árbol](img/arbol.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "luna",
+     "label": "luna",
+     "md": "![luna](img/luna.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "pez",
+     "label": "pez",
+     "md": "![pez](img/pez.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "llave",
+     "label": "llave",
+     "md": "![llave](img/llave.svg)"
+    }
+   ]
+  },
+  {
+   "task": "narracion",
+   "label": "Narración con viñetas",
+   "preset": "story",
+   "recording": "both",
+   "randomize": false,
+   "repetitions": 1,
+   "instructions": "Mira las viñetas y cuenta qué pasa, como si se lo contaras a un amigo.",
+   "slides": [
+    {
+     "kind": "md",
+     "id": "vineta1",
+     "label": "[historia1.svg]",
+     "md": "<!-- id: vineta1 -->\n![](img/historia1.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "vineta2",
+     "label": "[historia2.svg]",
+     "md": "<!-- id: vineta2 -->\n![](img/historia2.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "vineta3",
+     "label": "[historia3.svg]",
+     "md": "<!-- id: vineta3 -->\n![](img/historia3.svg)"
+    },
+    {
+     "kind": "md",
+     "id": "resumen",
+     "label": "[historia1.svg] [historia2.svg] [historia3.svg] ¿Cómo termina la historia?",
+     "md": "<!-- id: resumen -->\n![](img/historia1.svg) ![](img/historia2.svg) ![](img/historia3.svg)\n\n## ¿Cómo termina la historia?"
+    }
+   ]
+  },
+  {
+   "task": "entrevista",
+   "label": "Conversación",
+   "preset": "interview",
+   "recording": "continuous",
+   "randomize": false,
+   "repetitions": 1,
+   "instructions": "Ahora vamos a charlar un rato. No hay respuestas correctas ni incorrectas.",
+   "slides": [
+    {
+     "kind": "md",
+     "id": "donde_creciste_como_era",
+     "label": "¿Dónde creciste? ¿Cómo era tu barrio?",
+     "md": "## ¿Dónde creciste? ¿Cómo era tu barrio?"
+    },
+    {
+     "kind": "md",
+     "id": "que_idiomas_se_hablaban",
+     "label": "¿Qué idiomas se hablaban en tu casa?",
+     "md": "## ¿Qué idiomas se hablaban en tu casa?"
+    },
+    {
+     "kind": "md",
+     "id": "cuentame_algo_que_te_hay",
+     "label": "Cuéntame algo que te haya pasado y que recuerdes con cariño.",
+     "md": "## Cuéntame algo que te haya pasado y que recuerdes con cariño."
+    }
+   ]
+  }
+ ]
+}

@@ -1,5 +1,9 @@
 {
   "protocols": [
-    { "id": "example-es", "path": "example-es/protocol.md", "title": "Example protocol (Spanish)" }
+    {
+      "id": "example-es",
+      "path": "example-es/protocol.json",
+      "title": "Example protocol (Spanish)"
+    }
   ]
 }
