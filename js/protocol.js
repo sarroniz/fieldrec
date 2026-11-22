@@ -154,6 +154,28 @@ export async function parseProtocol(source) {
   const text = await source.readText(main);
   const protocol = { title: '', consent: '', meta: {}, tasks: [], warnings, missing: [] };
 
+  if (/\.json$/i.test(main)) {
+    // Format saved by the in-app editor
+    let j;
+    try { j = JSON.parse(text); } catch (e) { throw new Error('protocol.json is not valid JSON'); }
+    protocol.title = j.title || 'Untitled protocol';
+    protocol.meta = { title: protocol.title, language: j.language || 'en', author: j.author || '' };
+    protocol.consent = j.consent || '';
+    protocol.format = 'json';
+    for (const t of j.tasks || []) {
+      const task = newTask({ task: t.task || t.label, label: t.label, recording: t.recording, randomize: String(t.randomize ?? false),
+        repetitions: t.repetitions, instructions: t.instructions }, protocol.tasks.length);
+      task.preset = t.preset || '';
+      task.slides = (t.slides || []).map((sl, i) => ({ ...sl, kind: sl.kind || 'md',
+        id: slugify(sl.id || '') || `s${String(i + 1).padStart(2, '0')}`,
+        label: sl.label || plainText(sl.md || sl.caption || '') || sl.id || '' }));
+      protocol.tasks.push(task);
+    }
+    protocol.tasks = protocol.tasks.filter((t) => t.slides.length);
+    if (!protocol.tasks.length) warnings.push('The protocol contains no task with slides.');
+    return protocol;
+  }
+
   if (/\.(csv|tsv|txt)$/i.test(main) && !/\.md$/i.test(main)) {
     const rows = parseCSV(text);
     protocol.title = main.replace(/\.[^.]+$/, '');
@@ -241,7 +263,11 @@ export function referencedImages(protocol) {
       if (!/^(https?:|data:|blob:)/i.test(m[1])) set.add(m[1]);
     }
   };
-  protocol.tasks.forEach((t) => t.slides.forEach((s) => scan(s.md)));
+  protocol.tasks.forEach((t) => t.slides.forEach((s) => {
+    scan(s.md); scan(s.caption);
+    if (s.kind === 'image' && s.src && !/^(https?:|data:|blob:)/i.test(s.src)) set.add(s.src);
+    if (s.kind === 'pptx' && s.html) for (const m of s.html.matchAll(/data-media="([^"]+)"/g)) set.add(m[1].replace(/&amp;/g, '&'));
+  }));
   scan(protocol.consent);
   return [...set];
 }
@@ -339,4 +365,32 @@ export function renderMarkdown(md, resolve = (x) => x) {
   }
   flushPara(); flushList();
   return out.join('\n');
+}
+
+// ---------- slide rendering (all slide kinds) ----------
+// md: Markdown text · image: one picture (+ optional caption) · pptx: positioned HTML from a PowerPoint slide
+export function renderSlide(slide, resolve = (x) => x) {
+  if (slide.kind === 'pptx') {
+    const html = String(slide.html || '').replace(/data-media="([^"]+)"/g, (_, p) => `src="${esc(resolve(p.replace(/&amp;/g, '&')))}" data-media="${p}"`);
+    return `<div class="pptx-box"><div class="pptx-scale" data-w="${slide.w || 1000}" data-h="${slide.h || 562.5}">${html}</div></div>`;
+  }
+  if (slide.kind === 'image') {
+    return `<figure class="imgs n1"><img src="${esc(resolve(slide.src))}" alt="${esc(slide.label || '')}" draggable="false"></figure>${slide.caption ? renderMarkdown(slide.caption, resolve) : ''}`;
+  }
+  return renderMarkdown(slide.md, resolve);
+}
+
+// Scales every PowerPoint slide inside `root` to fit its box (call after inserting it and on resize).
+export function layoutPptx(root) {
+  if (!root) return;
+  for (const sc of root.querySelectorAll('.pptx-scale')) {
+    const box = sc.parentElement;
+    const w = Number(sc.dataset.w) || 1000, h = Number(sc.dataset.h) || 562.5;
+    const aw = box.clientWidth, ah = box.clientHeight || (aw * h) / w;
+    const s = Math.max(0.01, Math.min(aw / w, ah / h));
+    sc.style.width = `${w * s}px`;
+    sc.style.height = `${h * s}px`;
+    const inner = sc.firstElementChild;
+    if (inner) inner.style.transform = `scale(${s})`;
+  }
 }

@@ -6,9 +6,11 @@ A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitatio
 - **Recording modes per task:** per token, continuous, or continuous with per-slide cuts.
 - **Audio:** mono WAV at the device's native sample rate or resampled (48,000, 44,100, 22,050 or 16,000 Hz), as 16-bit, 24-bit or 32-bit float.
 - **Export:** a ZIP with the WAV files, Praat TextGrids for continuous tasks, `trials.csv` and `session.json`.
-- **Built-in Guide** (home screen → Guide): getting started, protocol format, accepted file types, data safety and troubleshooting.
+- **Protocol editor in the app:** build protocols step by step (task types, text, pictures, word lists) without writing any files.
+- **PowerPoint and PDF import:** slides from a `.pptx` are reproduced in the browser (navigation buttons hidden, images optimized); a PDF gives a pixel-exact copy.
+- **Built-in Guide** (home screen → Guide): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
 
-> **Prototype (v0.2.0).** Test it on your own iPad before using it with participants.
+> **Prototype (v0.3.0).** Test it on your own iPad before using it with participants.
 
 ---
 
@@ -26,11 +28,19 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 2. **Share → Add to Home Screen**.
 3. Always open it from that icon. The first time, it asks for microphone access.
 
-**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.2.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.3.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
 
 ---
 
-## Protocol format
+## Creating protocols
+
+There are three ways, from easiest to most technical:
+
+1. **The editor** (Protocols → New protocol). Add tasks by type (word list, picture naming, reading passage, story from pictures, interview, information only), which sets the recording mode and order. Add slides as text, pictures, a pasted word list, or a PowerPoint/PDF. Select slides and move them between tasks. Saved protocols are stored as `protocol.json` plus media files; **Download .zip** exports them for backup or for another iPad.
+2. **A PowerPoint presentation** (Protocols → From PowerPoint or PDF). Each slide is reproduced as positioned HTML: text boxes and placeholders (inheriting from layouts and masters), tables (including PowerPoint's default table style), pictures (cropping, transparency), preset and custom shapes, connectors, groups and backgrounds. Shapes with a "next/previous slide" action are hidden, hidden slides are skipped, PowerPoint sections can become tasks, and footer codes (if they identify the slides) become item IDs. Images are downscaled to about 2.2× the size they're shown at. Animations, transitions, video, charts and SmartArt are not reproduced; exporting the deck as **PDF** gives an exact copy (each page becomes a picture slide, rendered with pdf.js on the device).
+3. **Markdown/CSV files**, described below. The in-app Guide has a beginner tutorial with templates to copy.
+
+## Protocol format (Markdown)
 
 ### Markdown (`.md`)
 
@@ -128,11 +138,11 @@ Images must be included in the protocol. For privacy, the app blocks anything lo
 
 | Use | Extensions |
 |---|---|
-| Protocol | `.md` `.markdown` · `.csv` `.tsv` `.txt` |
-| Protocol bundle | `.zip` (stored or deflate-compressed) |
-| Images | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` |
-| Consent text | `.md` `.txt`, or written in the protocol header |
-| Not supported yet | `.pptx` `.ppt` `.key` `.pdf` `.docx` (export the slides as images instead) |
+| Presentations | `.pptx` · `.pdf` |
+| Pictures | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` |
+| Protocol files | `.zip` (from Fieldrec, with `protocol.json`; or a Markdown protocol folder) · `.md` `.markdown` · `.csv` `.tsv` `.txt` |
+| Consent text | typed in the editor, or `.md` / `.txt` in Markdown protocols |
+| Not supported | `.ppt` (save as .pptx), `.key` (export to PowerPoint or PDF), `.docx`, `.odp` |
 
 ---
 
@@ -184,18 +194,19 @@ Recordings exist **only on the device**, in the browser's storage for this websi
 
 ## Notes for an IRB protocol
 
-- The app is a static website: it sends no data to any server, uses no analytics and loads no external code or resources (enforced by its Content Security Policy).
+- The app is a static website: it sends no data to any server, uses no analytics and loads no external code or resources (enforced by its Content Security Policy). PowerPoint and PDF files are processed on the device.
 - Recordings are stored in Safari's local storage on the device, protected by iOS encryption when the device has a passcode.
 - Files carry only the participant code.
 - Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
 - Deleting a session requires confirming that the export has been saved, and every deletion is logged.
 
-## Known limitations (v0.2.0)
+## Known limitations (v0.3.0)
 
 - Mono only.
 - A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.
 - iOS stops the audio if the app goes to the background or the screen locks. The app tries to keep the screen on, logs the interruption and asks you to tap to resume.
-- PDF and PPTX import is not available yet, and exports are not password-protected.
+- PowerPoint import approximates fonts the iPad doesn't have and doesn't reproduce animations, transitions, video, charts or SmartArt (use PDF for those slides).
+- Exports are not password-protected.
 - The iPhone layout is not adapted yet.
 
 ## Code structure
@@ -205,6 +216,9 @@ index.html              single page
 css/app.css             styles (iPad mini portrait and landscape)
 js/app.js               interface and session flow
 js/guide.js             content of the Guide screen
+js/editor.js            in-app protocol editor
+js/pptx.js              PowerPoint reader (slides → positioned HTML) and image optimization
+js/pdf-import.js        PDF import (pages → pictures), loads vendor/pdfjs on demand
 js/audio.js             microphone, pre-roll and level meter
 js/recorder-worklet.js  capture AudioWorklet
 js/dsp.js               resampling and WAV encoding
@@ -216,4 +230,5 @@ js/unzip.js             ZIP reader (protocol import)
 js/textgrid.js          Praat TextGrid
 sw.js                   offline cache
 protocols/              bundled protocols (index.json + folders)
+vendor/pdfjs/           pdf.js 4.10.38 legacy build (Apache 2.0)
 ```

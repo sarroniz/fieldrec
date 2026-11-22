@@ -1,12 +1,13 @@
 import { AudioEngine } from './audio.js';
-import { parseProtocol, buildSequence, renderMarkdown, slugify, referencedImages, RECORDING_MODES } from './protocol.js';
+import { parseProtocol, buildSequence, renderMarkdown, renderSlide, layoutPptx, slugify, referencedImages, RECORDING_MODES } from './protocol.js';
 import { unzip } from './unzip.js';
 import { db } from './db.js';
 import { makeZip } from './zip.js';
 import { makeTextGrid } from './textgrid.js';
 import { guideHTML } from './guide.js';
+import { openEditor } from './editor.js';
 
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;            // session in progress
@@ -45,6 +46,7 @@ function saveSettings(s) { try { localStorage.setItem(SETTINGS_KEY, JSON.stringi
 let settings = loadSettings();
 
 function toast(msg, kind = '') {
+  document.querySelectorAll('.toast').forEach((x) => x.remove());
   const t = document.createElement('div');
   t.className = `toast ${kind}`;
   t.textContent = msg;
@@ -237,7 +239,7 @@ async function screenHome() {
         </button>
         <button class="card" data-go="protocols">
           <span class="card-ico">☰</span><span class="card-t">Protocols</span>
-          <span class="card-s">${protocols.length} available · import</span>
+          <span class="card-s">${protocols.length} available · create · import</span>
         </button>
         <button class="card" data-go="mic">
           <span class="card-ico">◉</span><span class="card-t">Microphone</span>
@@ -260,7 +262,9 @@ function go(where, arg) {
   if (where === 'protocols') return screenProtocols();
   if (where === 'mic') return screenMic();
   if (where === 'guide') return screenGuide(arg);
+  if (where === 'editor') return openEditor(editorApi(), arg || {});
 }
+const editorApi = () => ({ app, setScreen, toast, modal, db, uuid, go, loadProtocolEntry, guessType, toBlob, normPath, downloadBlob, makeZip });
 
 const backBar = (title, right = '') => `
   <header class="topbar"><button class="btn ghost back" data-back>‹ Home</button><h2>${esc(title)}</h2><div class="tb-right">${right}</div></header>`;
@@ -272,10 +276,19 @@ async function screenGuide(anchor) {
   setScreen(`<div class="page guide-page">${backBar('Guide')}
     ${guideHTML({ version: APP_VERSION, storageLine: esc(await storageLine()), standalone: isStandalone() })}</div>`, 'scroll');
   bindBack();
-  $$('.toc a').forEach((a) => a.addEventListener('click', (e) => {
+  $$('.toc a, a[data-jump]').forEach((a) => a.addEventListener('click', (e) => {
     e.preventDefault();
     const d = $(a.getAttribute('href'));
     if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }));
+  $$('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    const pre = b.closest('.snippet').querySelector('pre');
+    try { await navigator.clipboard.writeText(pre.textContent); toast('Copied'); }
+    catch (_) {
+      const r = document.createRange(); r.selectNodeContents(pre);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      toast('Text selected: use Copy from the menu');
+    }
   }));
   if (anchor) { const d = document.getElementById(anchor); if (d) { d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 50); } }
 }
@@ -375,7 +388,7 @@ async function screenMic() {
 }
 
 // ---------- PROTOCOLS ----------
-const IMPORT_ACCEPT = '.zip,application/zip,.md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*';
+const IMPORT_ACCEPT = '.zip,application/zip,.json,application/json,.md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*';
 const canPickFolder = () => matchMedia('(pointer: fine)').matches && 'webkitdirectory' in document.createElement('input');
 const isJunk = (p) => /(^|\/)(__MACOSX|\.git)(\/|$)/.test(p) || /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(p) || /(^|\/)\._/.test(p);
 
@@ -400,6 +413,8 @@ async function collectFiles(fileList) {
 async function chooseMain(files) {
   const depth = (f) => f.path.split('/').length;
   const byDepth = (a, b) => depth(a) - depth(b) || a.path.localeCompare(b.path);
+  const json = files.filter((f) => /(^|\/)protocol\.json$/i.test(f.path)).sort(byDepth)[0];
+  if (json) return json;
   const mds = files.filter((f) => /\.(md|markdown)$/i.test(f.path)).sort(byDepth);
   for (const f of mds) {
     if (/^\s*(task|tarea)\s*:/im.test(new TextDecoder().decode(f.data))) return f;
@@ -413,7 +428,7 @@ async function importFiles(fileList, existing = null) {
   let rec = existing;
   if (!rec) {
     const main = await chooseMain(files);
-    if (!main) throw new Error('There is no protocol file (.md or .csv)');
+    if (!main) throw new Error('There is no protocol file (protocol.json, .md or .csv). To use a PowerPoint or PDF, choose “From PowerPoint or PDF” instead.');
     rec = { id: 'imp:' + uuid(), title: '', mainName: main.path, files: {}, importedAt: new Date().toISOString() };
   }
   for (const f of files) rec.files[f.path] = { type: f.type, data: f.data };
@@ -444,9 +459,14 @@ const importedToast = (proto) => toast(proto.missing.length ? `Imported, but ${p
 async function screenProtocols(showId) {
   const list = await listProtocols();
   setScreen(`<div class="page">${backBar('Protocols')}
+    <section class="panel create">
+      <h3>Create a protocol</h3>
+      <p class="muted">Build it here step by step: add tasks, then slides (text, pictures, word lists, or a PowerPoint/PDF presentation). No files to write. <a href="#" data-go="guide" data-anchor="g-editor">How it works</a></p>
+      <div class="row gap wrap"><button class="btn primary" id="new-proto">New protocol</button><button class="btn" id="new-from-deck">From PowerPoint or PDF</button></div>
+    </section>
     <section class="panel">
-      <h3>Import a protocol</h3>
-      <p class="muted">The easiest way is a <b>.zip of the protocol folder</b> (in the Files app: long-press the folder → <b>Compress</b>). You can also select the <b>.md</b> or <b>.csv</b> file together with the files it uses; if anything is missing, you can add it afterwards. See the <a href="#" data-go="guide" data-anchor="g-protocols">Guide</a> for the format.</p>
+      <h3>Import a protocol file</h3>
+      <p class="muted">For protocols downloaded from Fieldrec (.zip) or written as Markdown/CSV files. The easiest way is a <b>.zip of the protocol folder</b> (in the Files app: long-press the folder → <b>Compress</b>). <a href="#" data-go="guide" data-anchor="g-markdown">Markdown guide</a></p>
       <div class="row gap wrap">${importButtons('imp', 'Import files or .zip', 'Import folder')}</div>
     </section>
     <div class="list">${list.map((p) => `
@@ -461,6 +481,8 @@ async function screenProtocols(showId) {
     <div id="preview"></div></div>`, 'scroll');
   bindBack();
   $$('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); go(a.dataset.go, a.dataset.anchor); }));
+  $('#new-proto').addEventListener('click', () => go('editor', {}));
+  $('#new-from-deck').addEventListener('click', () => go('editor', { start: 'deck' }));
   bindImport('imp', async (files) => {
     try {
       const { rec, proto } = await importFiles(files);
@@ -520,13 +542,16 @@ async function showPreview(entry) {
         <td>${t.slides.length}${t.repetitions > 1 ? ` × ${t.repetitions}` : ''}</td><td>${orderLabel(t)}</td></tr>`).join('')}
       </table>
       <div class="thumbs">${p.tasks.flatMap((t) => t.slides.slice(0, 4).map((s) =>
-        `<div class="thumb"><div class="thumb-in">${renderMarkdown(s.md, p.resolve)}</div><span>${esc(t.name)} · ${esc(s.id)}</span></div>`)).join('')}</div>
+        `<div class="thumb"><div class="thumb-in${s.kind === 'pptx' ? ' is-pptx' : ''}">${renderSlide(s, p.resolve)}</div><span>${esc(t.name)} · ${esc(s.id)}</span></div>`)).join('')}</div>
       <div class="row gap wrap">
         <button class="btn primary" id="pv-start" ${p.tasks.length ? '' : 'disabled'}>New session with this protocol</button>
+        <button class="btn" id="pv-edit">${entry.kind === 'builtin' ? 'Edit a copy' : 'Edit'}</button>
         <button class="btn" id="pv-zip">Download .zip</button>
       </div>
     </section>`;
+    layoutPptx(box);
     $('#pv-start').addEventListener('click', () => go('setup', entry.id));
+    $('#pv-edit').addEventListener('click', () => go('editor', { entry }));
     const zipBtn = $('#pv-zip');
     zipBtn.addEventListener('click', async () => {
       zipBtn.disabled = true;
@@ -850,12 +875,17 @@ function showSlide() {
   } else {
     const x = t.seq[run.si];
     $('#r-prog').textContent = `${run.si + 1} / ${total}`;
-    content.innerHTML = renderMarkdown(x.slide.md, run.proto.resolve);
-    const hasText = !!content.querySelector('p, h1, h2, h3, li');
-    const imgs = content.querySelectorAll('img').length;
-    slideEl.classList.add(imgs && !hasText ? 'image-only' : imgs ? 'image-text' : 'text-only');
-    if (!content.querySelector('p, li') && hasText) slideEl.classList.add('headline');
-    $$('img', content).forEach((im) => im.addEventListener('load', () => fitText(), { once: true }));
+    content.innerHTML = renderSlide(x.slide, run.proto.resolve);
+    if (x.slide.kind === 'pptx') {
+      slideEl.classList.add('pptx');
+      layoutPptx(content);
+    } else {
+      const hasText = !!content.querySelector('p, h1, h2, h3, li');
+      const imgs = content.querySelectorAll('img').length;
+      slideEl.classList.add(imgs && !hasText ? 'image-only' : imgs ? 'image-text' : 'text-only');
+      if (!content.querySelector('p, li') && hasText) slideEl.classList.add('headline');
+      $$('img', content).forEach((im) => im.addEventListener('load', () => fitText(), { once: true }));
+    }
     if (isCont(t)) {
       closeMark();
       run.curMark = { start: engine.offset(), seqIndex: run.si, slide: x.slide, rep: x.rep, item: x.item, shownAt: new Date().toISOString() };
@@ -869,6 +899,7 @@ function showSlide() {
 function fitText() {
   const slide = $('#r-slide'), content = $('#r-content');
   if (!slide || !content) return;
+  if (slide.classList.contains('pptx')) { content.style.fontSize = ''; layoutPptx(content); return; }
   const headline = slide.classList.contains('headline') || slide.classList.contains('is-intro');
   const W = slide.clientWidth, H = slide.clientHeight;
   let size = headline ? Math.min(W, H) * 0.09 : Math.min(W, H) * 0.06;
@@ -880,7 +911,7 @@ function fitText() {
     content.style.fontSize = size + 'px';
   }
 }
-window.addEventListener('resize', () => { if (run) fitText(); });
+window.addEventListener('resize', () => { if (run) fitText(); layoutPptx(document.getElementById('preview')); });
 
 function updateControls() {
   const t = curTask();
@@ -1166,7 +1197,7 @@ async function screenSessions() {
 async function screenAudit() {
   const rows = (await db.all('audit')).reverse();
   const lbl = { session_created: 'Session created', session_completed: 'Session completed', session_ended_early: 'Session ended early',
-    protocol_updated: 'Protocol updated', export_prepared: 'Export prepared', export_shared: 'Export shared', export_downloaded: 'Export downloaded',
+    protocol_updated: 'Protocol updated', protocol_created: 'Protocol created', export_prepared: 'Export prepared', export_shared: 'Export shared', export_downloaded: 'Export downloaded',
     session_deleted: 'Session deleted', consent_declined: 'Consent declined', protocol_imported: 'Protocol imported', protocol_deleted: 'Protocol deleted' };
   setScreen(`<div class="page">${backBar('Activity log', `<button class="btn" id="a-csv">Export CSV</button>`)}
     <section class="panel"><table class="kv log">${rows.map((r) => `<tr><td class="muted">${fmtDate(r.time)}</td><td>${esc(lbl[r.action] || r.action)}</td><td>${esc(r.participant || r.protocol || '')}</td></tr>`).join('') || '<tr><td class="muted">No activity yet.</td></tr>'}</table></section></div>`, 'scroll');
