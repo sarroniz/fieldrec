@@ -1,5 +1,5 @@
 import { AudioEngine } from './audio.js';
-import { parseProtocol, buildSequence, renderMarkdown, renderSlide, layoutPptx, slugify, referencedImages, RECORDING_MODES } from './protocol.js';
+import { parseProtocol, buildSequence, renderMarkdown, renderSlide, layoutPptx, slugify, referencedImages, RECORDING_MODES, QUESTION_TEXT, answerText, isAnswered } from './protocol.js';
 import { unzip } from './unzip.js';
 import { db } from './db.js';
 import { makeZip } from './zip.js';
@@ -7,7 +7,7 @@ import { makeTextGrid } from './textgrid.js';
 import { guideHTML } from './guide.js';
 import { openEditor } from './editor.js';
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;            // session in progress
@@ -37,7 +37,9 @@ const PARTICIPANT_TEXT = {
     c1: 'Acepto participar en este estudio.', c2: 'Acepto que se grabe mi voz.',
     c3: 'Acepto que la grabación se archive para investigaciones futuras (opcional).' },
 };
-const ptext = (proto) => PARTICIPANT_TEXT[String((proto && proto.meta && proto.meta.language) || 'en').slice(0, 2).toLowerCase()] || PARTICIPANT_TEXT.en;
+const langOf = (proto) => String((proto && proto.meta && proto.meta.language) || 'en').slice(0, 2).toLowerCase();
+const ptext = (proto) => PARTICIPANT_TEXT[langOf(proto)] || PARTICIPANT_TEXT.en;
+const qtext = (proto) => QUESTION_TEXT[langOf(proto)] || QUESTION_TEXT.en;
 
 const SETTINGS_KEY = 'fieldrec.settings';
 const DEFAULTS = { sampleRate: 'native', bitDepth: 16, prerollMs: 250, postrollMs: 250, autoAdvance: false, researcher: '', location: '', seenGuide: false };
@@ -799,8 +801,9 @@ function startRun(proto, session, chosen) {
     proto, session,
     tasks: chosen.map((i, k) => ({ task: proto.tasks[i], seq: buildSequence(proto.tasks[i], (session.seed + k * 7919) >>> 0) })),
     ti: 0, si: 0, phase: 'intro',
-    rec: null, marks: [], curMark: null, takes: {}, busy: false, interrupted: false,
+    rec: null, marks: [], curMark: null, takes: {}, busy: false, interrupted: false, answers: {},
   };
+  session.responses = session.responses || [];
   session.order = run.tasks.map((t) => ({ task: t.task.name, order: t.seq.map((x) => `${x.slide.id}#${x.rep}`) }));
   db.put('sessions', session);
   requestWake();
@@ -875,8 +878,14 @@ function showSlide() {
   } else {
     const x = t.seq[run.si];
     $('#r-prog').textContent = `${run.si + 1} / ${total}`;
-    content.innerHTML = renderSlide(x.slide, run.proto.resolve);
-    if (x.slide.kind === 'pptx') {
+    if (x.slide.kind === 'question') {
+      slideEl.classList.add('question');
+      content.innerHTML = renderSlide(x.slide, run.proto.resolve, { interactive: true, answer: run.answers[takeKey()], texts: qtext(run.proto) });
+      bindQuestion(content, x.slide);
+    } else content.innerHTML = renderSlide(x.slide, run.proto.resolve);
+    if (x.slide.kind === 'question') {
+      // questions scroll instead of shrinking
+    } else if (x.slide.kind === 'pptx') {
       slideEl.classList.add('pptx');
       layoutPptx(content);
     } else {
@@ -900,6 +909,7 @@ function fitText() {
   const slide = $('#r-slide'), content = $('#r-content');
   if (!slide || !content) return;
   if (slide.classList.contains('pptx')) { content.style.fontSize = ''; layoutPptx(content); return; }
+  if (slide.classList.contains('question')) { content.style.fontSize = ''; return; }
   const headline = slide.classList.contains('headline') || slide.classList.contains('is-intro');
   const W = slide.clientWidth, H = slide.clientHeight;
   let size = headline ? Math.min(W, H) * 0.09 : Math.min(W, H) * 0.06;
@@ -919,7 +929,9 @@ function updateControls() {
   const recBtn = $('#r-rec'), prev = $('#r-prev'), next = $('#r-next'), status = $('#r-status');
   const inSlide = run.phase === 'slide';
   const tokenRec = run.rec && run.rec.kind === 'token';
-  recBtn.classList.toggle('hidden', !(inSlide && mode === 'per_token'));
+  const curSlide = inSlide ? t.seq[run.si].slide : null;
+  const isQ = !!curSlide && curSlide.kind === 'question';
+  recBtn.classList.toggle('hidden', !(inSlide && mode === 'per_token' && !isQ));
   recBtn.classList.toggle('on', !!tokenRec);
   recBtn.disabled = run.busy;
   prev.disabled = run.busy || run.phase !== 'slide' || run.si === 0;
@@ -928,7 +940,10 @@ function updateControls() {
     : run.si === t.seq.length - 1 ? 'Finish task ›' : 'Next ›';
   $('#r-ind').classList.toggle('on', !!run.rec);
   if (run.busy) status.textContent = 'Saving…';
-  else if (inSlide && mode === 'per_token') {
+  else if (isQ) {
+    const ok = isAnswered(curSlide, run.answers[takeKey()]);
+    status.innerHTML = ok ? '<span class="good">✓ Answered</span>' : curSlide.required ? 'Answer to continue' : 'Optional question';
+  } else if (inSlide && mode === 'per_token') {
     const n = run.takes[takeKey()] || 0;
     status.innerHTML = tokenRec ? '<b class="rec-t">Recording</b>' : n ? `<span class="good">✓ Take ${n} saved</span>` : 'Tap to record';
   } else if (inSlide && isCont(t)) status.innerHTML = '<b class="rec-t">Continuous recording</b>';
@@ -950,8 +965,56 @@ function fileBase(slideOrder, x) {
   return `${s.participant}_${s.session}_${t.name}_${pad(slideOrder + 1)}_${x.slide.id}${t.repetitions > 1 ? `_r${x.rep}` : ''}`;
 }
 
+// ---------- questions ----------
+function collectAnswer(root, slide) {
+  if (slide.qtype === 'single' || slide.qtype === 'multiple') {
+    const choices = [...root.querySelectorAll('.q-opt > input:checked')].map((i) => (i.value === 'other' ? 'other' : Number(i.value)));
+    const other = root.querySelector('.q-other-text');
+    return { choices, other: other ? other.value.trim() : '' };
+  }
+  const f = root.querySelector('.q-field');
+  return { value: f ? f.value.trim() : '' };
+}
+function bindQuestion(root, slide) {
+  const update = () => { run.answers[takeKey()] = collectAnswer(root, slide); const err = root.querySelector('.q-error'); if (err) err.hidden = true; updateControls(); };
+  root.addEventListener('input', update);
+  root.addEventListener('change', update);
+  const other = root.querySelector('.q-other-text');
+  if (other) other.addEventListener('focus', () => { const box = other.parentElement.querySelector('input[value="other"]'); if (box && !box.checked) { box.checked = true; update(); } });
+  for (const f of root.querySelectorAll('input[type="text"], textarea')) {
+    f.addEventListener('focus', () => setTimeout(() => f.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350));
+  }
+  const field = root.querySelector('input.q-field');
+  if (field) field.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); field.blur(); navigate(1); } });
+}
+// Saves the answer on the current question slide. With validate, refuses to continue if a required answer is missing.
+async function commitQuestion(validate) {
+  if (!run || run.phase !== 'slide') return true;
+  const t = curTask(); const x = t.seq[run.si];
+  if (!x || x.slide.kind !== 'question') return true;
+  const root = $('#r-content');
+  const ans = collectAnswer(root, x.slide);
+  run.answers[takeKey()] = ans;
+  if (validate) {
+    const pt = qtext(run.proto);
+    const err = root.querySelector('.q-error');
+    let msg = '';
+    if (x.slide.required && !isAnswered(x.slide, ans)) msg = pt.required;
+    else if (x.slide.qtype === 'number' && ans.value && !/^-?\d+([.,]\d+)?$/.test(ans.value)) msg = pt.number;
+    if (msg) { if (err) { err.textContent = msg; err.hidden = false; } return false; }
+  }
+  const rec = { task: t.task.name, order: run.si + 1, item: x.item, rep: x.rep, id: x.slide.id, question: x.slide.label, type: x.slide.qtype,
+    answer: answerText(x.slide, ans), raw: ans, answered_at: new Date().toISOString() };
+  const list = run.session.responses;
+  const i = list.findIndex((r) => r.task === rec.task && r.order === rec.order && r.rep === rec.rep);
+  if (i >= 0) list[i] = rec; else list.push(rec);
+  await db.put('sessions', run.session);
+  return true;
+}
+
 async function toggleTokenRec() {
   if (run.busy || run.phase !== 'slide') return;
+  if (curTask().seq[run.si].slide.kind === 'question') return;
   if (!run.rec) {
     try { await engine.ensureRunning(); } catch (e) { return toast('Microphone unavailable: ' + e.message, 'err'); }
     engine.start(settings.prerollMs);
@@ -1046,6 +1109,7 @@ async function navigate(dir, fromAuto = false) {
     return finishSession('complete');
   }
   if (run.rec && run.rec.kind === 'token') await stopToken();
+  if (!(await commitQuestion(dir > 0))) return;
   if (dir < 0) {
     if (run.si > 0) { run.si--; showSlide(); }
     return;
@@ -1071,6 +1135,7 @@ async function runnerMenu() {
     const a = e.target.closest('[data-a]'); if (!a) return;
     m.remove();
     if (a.dataset.a === 'skip') {
+      await commitQuestion(false);
       if (run.rec && run.rec.kind === 'token') await stopToken();
       if (run.phase === 'slide' && isCont(curTask())) await finishContinuous();
       run.phase = 'done'; showSlide();
@@ -1079,6 +1144,7 @@ async function runnerMenu() {
     } else if (a.dataset.a === 'end') {
       const ok = await modal({ title: 'End session', body: '<p>Anything being recorded will be saved. The session will be marked as incomplete.</p>', ok: 'End session', danger: true });
       if (!ok) return;
+      await commitQuestion(false);
       if (run.rec && run.rec.kind === 'token') await stopToken();
       if (run.rec && run.rec.kind === 'continuous') await finishContinuous();
       finishSession('incomplete');
@@ -1144,12 +1210,14 @@ document.addEventListener('visibilitychange', () => {
 // Keyboard or presentation remote (arrows / Page Down / Page Up / space)
 document.addEventListener('keydown', (e) => {
   if (!run || document.querySelector('.modal-back')) return;
+  if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return; // typing an answer
   const k = e.key;
   if (['ArrowRight', 'PageDown', 'ArrowDown'].includes(k)) { e.preventDefault(); navigate(1); }
   else if (['ArrowLeft', 'PageUp', 'ArrowUp'].includes(k)) { e.preventDefault(); navigate(-1); }
   else if (k === ' ' || k === 'Enter') {
     e.preventDefault();
-    if (run.phase === 'slide' && curTask().task.recording === 'per_token') toggleTokenRec(); else navigate(1);
+    const onQuestion = run.phase === 'slide' && curTask().seq[run.si].slide.kind === 'question';
+    if (run.phase === 'slide' && curTask().task.recording === 'per_token' && !onQuestion) toggleTokenRec(); else navigate(1);
   } else if (k === 'Escape') runnerMenu();
 });
 
@@ -1216,6 +1284,11 @@ function trialsCSV(s) {
   return '﻿' + [keys.join(',')].concat(s.trials.map((t) => keys.map((k) => csvCell(k === 'participant' ? s.participant : k === 'session' ? s.session : t[k])).join(','))).join('\n') + '\n';
 }
 
+function responsesCSV(s) {
+  const keys = ['participant', 'session', 'task', 'order', 'item', 'rep', 'id', 'question', 'type', 'answer', 'answered_at'];
+  return '\uFEFF' + [keys.join(',')].concat(s.responses.map((r) => keys.map((k) => csvCell(k === 'participant' ? s.participant : k === 'session' ? s.session : r[k])).join(','))).join('\n') + '\n';
+}
+
 function sessionJSON(s, files) {
   const { protocolTexts, persisted, ...rest } = s;
   return { ...rest, files: files.map(({ blob, data, sessionId, ...f }) => f) };
@@ -1227,6 +1300,7 @@ Protocol: ${s.protocol.title}
 
 audio/        WAV files (and Praat TextGrids for continuous tasks)
 trials.csv    One row per take or interval, with times in seconds
+responses.csv Answers to questions (text and multiple choice), if the protocol has any
 session.json  Full metadata: requested and obtained audio settings, consent,
               presentation order (seed ${s.seed}), interruptions and device information
 protocol/     Copy of the protocol text files used in the session
@@ -1242,6 +1316,7 @@ async function prepareExport(sessionId, slot) {
     const entries = files.map((f) => ({ name: `${F}/audio/${f.name}`, data: f.data || f.blob }));
     entries.push({ name: `${F}/session.json`, data: JSON.stringify(sessionJSON(s, files), null, 2) });
     entries.push({ name: `${F}/trials.csv`, data: trialsCSV(s) });
+    if (s.responses && s.responses.length) entries.push({ name: `${F}/responses.csv`, data: responsesCSV(s) });
     for (const [n, t] of Object.entries(s.protocolTexts || {})) entries.push({ name: `${F}/protocol/${n.split('/').pop()}`, data: t });
     entries.push({ name: `${F}/README.txt`, data: README_TXT(s) });
     const bar = $('.progress div', slot);

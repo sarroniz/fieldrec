@@ -95,6 +95,35 @@ recording: continuous
 ## Where did you grow up?
 ---
 ## What languages were spoken at home?`,
+  questions: `---
+task: background
+label: Background
+recording: none
+---
+<!-- question: number; required -->
+<!-- id: age -->
+## How old are you?
+---
+<!-- question: short -->
+<!-- id: birthplace -->
+## Where were you born?
+---
+<!-- question: single; other -->
+<!-- id: first_language -->
+## Which language did you learn first at home?
+- English
+- Spanish
+- Both
+---
+<!-- question: multiple; required -->
+<!-- id: languages -->
+## Which languages do you speak?
+- English
+- Spanish
+- French
+---
+<!-- question: long -->
+## Anything else you would like to tell us?`,
   info: `---
 task: intro
 label: Introduction
@@ -187,6 +216,8 @@ export function guideHTML({ version, storageLine, standalone }) {
           <tr><td>Reading passage</td><td>One continuous recording</td><td>Fixed</td></tr>
           <tr><td>Story from pictures</td><td>Continuous + one file per slide</td><td>Fixed</td></tr>
           <tr><td>Interview or open questions</td><td>One continuous recording</td><td>Fixed</td></tr>
+          <tr><td>Text answers (questionnaire)</td><td>No recording: typed answers</td><td>Fixed</td></tr>
+          <tr><td>Multiple choice</td><td>No recording: chosen answers</td><td>Fixed</td></tr>
           <tr><td>Information only</td><td>No recording</td><td>Fixed</td></tr>
         </table>
         Then give the task a name (participants see it on the instructions screen).</li>
@@ -196,6 +227,8 @@ export function guideHTML({ version, storageLine, standalone }) {
           <li><b>Pictures:</b> choose one or more images; each becomes one slide. You can add a caption afterwards with <b>Edit</b>.</li>
           <li><b>Word list:</b> paste your items, one per line. Optionally add a carrier phrase such as ${code('Digo {text} otra vez.')}: ${code('{text}')} is replaced by each item, in bold.</li>
           <li><b>PowerPoint or PDF:</b> brings in every slide of a presentation. See <a href="#g-pptx" data-jump>From PowerPoint</a>.</li>
+          <li><b>Question:</b> a question the participant answers on the iPad, with no audio. Choose the type of answer: <i>short text</i>, <i>long text</i>, <i>number</i>, <i>one answer</i> (single choice) or <i>several answers</i> (multiple choice). For choices, write the options one per line and, if you want, add “Other” with a box to type in. Mark it <b>required</b> if the participant must answer before continuing.</li>
+          <li><b>Sample background questions</b> (in “Text answers” tasks): adds typical questions (age, place of birth, where they grew up, languages, education…) in the protocol’s language, ready to edit or delete.</li>
         </ul></li>
       <li><b>Optional settings for each task:</b> an <b>instructions screen</b> shown before the task starts (nothing is recorded on it), how many <b>repetitions</b> of each slide, and the <b>slide order</b> (fixed, random, or fully random across repetitions). The random order changes for every participant and is saved with each session.</li>
       <li><b>Organize the slides.</b> Tap a slide to edit it. Use <b>‹ ›</b> to move it earlier or later, and <b>✕</b> to delete it. To move several slides to another task, tap the circle in their corner to select them, then use <b>Move to</b> in the bar at the bottom of the screen. Choose “New task…” there to create the task as you move them.</li>
@@ -207,6 +240,7 @@ export function guideHTML({ version, storageLine, standalone }) {
     <ul>
       <li>Put practice items in their own task, so they don’t mix with the real items when the order is random.</li>
       <li>For intro or explanation slides that shouldn’t be recorded, use an <b>Information only</b> task.</li>
+      <li>Answers to questions are exported in <b>responses.csv</b>, one row per question, with the item ID as identifier: give questions short, clear IDs (${code('age')}, ${code('birthplace')}…).</li>
       <li>In tasks recorded “each slide separately”, recording is optional on every slide: slides you don’t record (examples, answers) simply produce no file.</li>
       <li>Try the protocol yourself with a test code such as ${code('TEST01')} before your first participant, and check the exported files.</li>
     </ul>
@@ -278,6 +312,7 @@ export function guideHTML({ version, storageLine, standalone }) {
     ${snippet('Reading passage', MD_TASKS.reading)}
     ${snippet('Story from pictures', MD_TASKS.story)}
     ${snippet('Interview questions', MD_TASKS.interview)}
+    ${snippet('Questionnaire: text and multiple-choice questions', MD_TASKS.questions)}
     ${snippet('Information only (no recording)', MD_TASKS.info)}
     <h4>All the keys</h4>
     <table class="kv">
@@ -294,6 +329,7 @@ export function guideHTML({ version, storageLine, standalone }) {
       <tr><td>${code('items')}</td><td>A CSV file whose rows become slides (columns ${code('text')}, ${code('id')}, ${code('image')}, ${code('carrier')}).</td></tr>
       <tr><td>${code('carrier')}</td><td>Carrier phrase for the CSV items; ${code('{text}')} is replaced by the item.</td></tr>
     </table>
+    <p><b>Questions:</b> a slide with ${code('&lt;!-- question: TYPE --&gt;')} becomes a question. TYPE is ${code('short')}, ${code('long')}, ${code('number')}, ${code('single')} or ${code('multiple')}; add ${code('; required')} and/or ${code('; other')}. For choices, each line starting with ${code('-')} is an option.</p>
     <p>Inside a slide: ${code('&lt;!-- id: name --&gt;')} sets the item ID, ${code('==text==')} highlights, and several pictures on one line are shown side by side. Spanish key names (${code('tarea')}, ${code('grabacion')}, ${code('aleatorio')}…) also work.</p>
     <h4>Common mistakes</h4>
     <ul>
@@ -314,6 +350,7 @@ export function guideHTML({ version, storageLine, standalone }) {
       <tr><td><b>Continuous + one file per slide</b></td><td>Like continuous, plus one WAV per slide cut from the continuous recording.</td></tr>
       <tr><td><b>No recording</b></td><td>Only shows the slides.</td></tr>
     </table>
+    <p><b>Questions</b> show a text box or options to tap. The participant (or you) types or chooses the answer and taps <b>Next</b>; Enter also moves on after a short answer. A required question can’t be skipped. Going back shows the answer given, which can be changed.</p>
     <h4>Controls</h4>
     <ul>
       <li><b>Next</b> while a take is recording stops it, saves it and moves on.</li>
@@ -339,6 +376,7 @@ export function guideHTML({ version, storageLine, standalone }) {
       <tr><td>${code('audio/*.wav')}</td><td>Mono WAV: 16-bit or 24-bit PCM, or 32-bit float.</td></tr>
       <tr><td>${code('audio/*.TextGrid')}</td><td>Praat TextGrid for continuous tasks, with ${code('slide')} and ${code('texto')} tiers.</td></tr>
       <tr><td>${code('trials.csv')}</td><td>One row per take or interval: times in seconds, sample rate, bit depth, clipping.</td></tr>
+      <tr><td>${code('responses.csv')}</td><td>Answers to questions: one row per question, with its ID, type, the answer (choices joined with “ | ”) and the time.</td></tr>
       <tr><td>${code('session.json')}</td><td>Participant code, consent, requested and obtained audio settings, presentation order and seed, interruptions, device.</td></tr>
       <tr><td>${code('protocol/')}</td><td>Copy of the protocol text files used.</td></tr>
     </table>

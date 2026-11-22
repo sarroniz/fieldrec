@@ -220,6 +220,12 @@ export async function parseProtocol(source) {
       if (!md) continue;
       if (!cur) { cur = newTask({}, protocol.tasks.length); protocol.tasks.push(cur); }
       const idm = md.match(/<!--\s*id\s*:\s*([^>]*?)\s*-->/i);
+      const qm = md.match(/<!--\s*(question|pregunta)\s*:\s*([^>]*?)\s*-->/i);
+      if (qm) {
+        const q = questionFromMarkdown(md, qm[2]);
+        cur.slides.push({ ...q, id: slugify(idm ? idm[1] : q.label) || '' });
+        continue;
+      }
       const label = plainText(md);
       cur.slides.push({ id: slugify(idm ? idm[1] : label) || '', md, label });
     }
@@ -367,9 +373,87 @@ export function renderMarkdown(md, resolve = (x) => x) {
   return out.join('\n');
 }
 
+// ---------- questions (no audio: typed or chosen answers) ----------
+export const QUESTION_TYPES = {
+  short: 'Short text', long: 'Long text', number: 'Number', single: 'One answer (single choice)', multiple: 'Several answers (multiple choice)',
+};
+const QTYPE_ALIASES = { short: 'short', text: 'short', texto: 'short', corto: 'short', long: 'long', paragraph: 'long', largo: 'long',
+  number: 'number', numero: 'number', single: 'single', radio: 'single', una: 'single', multiple: 'multiple', checkbox: 'multiple', varias: 'multiple' };
+
+// Markdown: a slide containing <!-- question: single; required; other --> plus "- option" lines
+function questionFromMarkdown(md, spec) {
+  const parts = String(spec).split(/[;,]/).map((x) => slugify(x, 20)).filter(Boolean);
+  const qtype = QTYPE_ALIASES[parts[0]] || 'short';
+  const choice = qtype === 'single' || qtype === 'multiple';
+  const options = [];
+  const rest = [];
+  for (const line of md.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+    const m = choice && line.match(/^\s*[-*+]\s+(?:\[[ xX]?\]\s*)?(.+)$/);
+    if (m) options.push(m[1].trim()); else rest.push(line);
+  }
+  const text = rest.join('\n').trim();
+  return {
+    kind: 'question', qtype, md: text, label: plainText(text).slice(0, 120), options,
+    required: parts.includes('required') || parts.includes('obligatoria') || parts.includes('obligatorio'),
+    other: parts.includes('other') || parts.includes('otra') || parts.includes('otro'),
+  };
+}
+
+export const QUESTION_TEXT = {
+  en: { typeHere: 'Type your answer…', number: 'Please enter a number.', other: 'Other', specify: 'Please specify',
+    chooseOne: 'Choose one answer.', chooseAll: 'Choose all that apply.', required: 'Please answer this question to continue.', optional: 'Optional' },
+  es: { typeHere: 'Escribe tu respuesta…', number: 'Escribe un número.', other: 'Otra', specify: 'Especifica',
+    chooseOne: 'Elige una respuesta.', chooseAll: 'Elige todas las que correspondan.', required: 'Responde a esta pregunta para continuar.', optional: 'Opcional' },
+};
+
+// answer: { value } for text questions, { choices: [index…], other } for choice questions
+function renderQuestion(slide, resolve, { interactive = false, answer = null, texts = QUESTION_TEXT.en } = {}) {
+  const t = texts;
+  const dis = interactive ? '' : ' disabled tabindex="-1"';
+  const qt = slide.qtype || 'short';
+  let input = '', hint = '';
+  if (qt === 'long') {
+    input = `<textarea class="q-field" rows="4" placeholder="${esc(slide.placeholder || t.typeHere)}"${dis}>${esc((answer && answer.value) || '')}</textarea>`;
+  } else if (qt === 'short' || qt === 'number') {
+    input = `<input class="q-field" type="text" ${qt === 'number' ? 'inputmode="decimal" ' : ''}autocomplete="off" autocorrect="off" spellcheck="false" placeholder="${esc(slide.placeholder || t.typeHere)}" value="${esc((answer && answer.value) || '')}"${dis}>`;
+  } else {
+    const multi = qt === 'multiple';
+    const sel = new Set((answer && answer.choices) || []);
+    input = (slide.options || []).map((o, i) => `<label class="q-opt"><input type="${multi ? 'checkbox' : 'radio'}" name="q" value="${i}" ${sel.has(i) ? 'checked' : ''}${dis}><span>${inline(o, resolve)}</span></label>`).join('');
+    if (slide.other) {
+      input += `<label class="q-opt q-other"><input type="${multi ? 'checkbox' : 'radio'}" name="q" value="other" ${sel.has('other') ? 'checked' : ''}${dis}><span>${esc(t.other)}</span>
+        <input class="q-other-text" type="text" autocomplete="off" placeholder="${esc(t.specify)}" value="${esc((answer && answer.other) || '')}"${dis}></label>`;
+    }
+    hint = multi ? t.chooseAll : t.chooseOne;
+  }
+  const meta = [hint, slide.required ? '' : t.optional].filter(Boolean).join(' · ');
+  return `<div class="q q-${qt}">${renderMarkdown(slide.md, resolve)}${meta ? `<p class="q-hint">${esc(meta)}</p>` : ''}<div class="q-input">${input}</div><p class="q-error" hidden></p></div>`;
+}
+
+// Human-readable answer (for responses.csv): text as typed; choices joined with " | "
+export function answerText(slide, answer) {
+  if (!answer) return '';
+  if (slide.qtype === 'single' || slide.qtype === 'multiple') {
+    return (answer.choices || []).map((c) => (c === 'other' ? `Other: ${answer.other || ''}` : (slide.options || [])[c])).filter((x) => x != null).join(' | ');
+  }
+  return answer.value || '';
+}
+export function isAnswered(slide, answer) {
+  if (!answer) return false;
+  if (slide.qtype === 'single' || slide.qtype === 'multiple') {
+    const ch = answer.choices || [];
+    if (!ch.length) return false;
+    if (ch.length === 1 && ch[0] === 'other' && !(answer.other || '').trim()) return false;
+    return true;
+  }
+  return !!(answer.value || '').trim();
+}
+
 // ---------- slide rendering (all slide kinds) ----------
 // md: Markdown text · image: one picture (+ optional caption) · pptx: positioned HTML from a PowerPoint slide
-export function renderSlide(slide, resolve = (x) => x) {
+// question: a question with a text box or options (opts.interactive enables the inputs)
+export function renderSlide(slide, resolve = (x) => x, opts = {}) {
+  if (slide.kind === 'question') return renderQuestion(slide, resolve, opts);
   if (slide.kind === 'pptx') {
     const html = String(slide.html || '').replace(/data-media="([^"]+)"/g, (_, p) => `src="${esc(resolve(p.replace(/&amp;/g, '&')))}" data-media="${p}"`);
     return `<div class="pptx-box"><div class="pptx-scale" data-w="${slide.w || 1000}" data-h="${slide.h || 562.5}">${html}</div></div>`;

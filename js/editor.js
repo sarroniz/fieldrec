@@ -1,7 +1,7 @@
 // In-app protocol editor: build a protocol without writing any files by hand.
 // Saves to the "protocol.json" format (plus media files) inside the browser's storage.
 
-import { renderSlide, renderMarkdown, layoutPptx, slugify, plainText, referencedImages } from './protocol.js';
+import { renderSlide, renderMarkdown, layoutPptx, slugify, plainText, referencedImages, QUESTION_TYPES, QUESTION_TEXT } from './protocol.js';
 
 export const PRESETS = {
   word_list: { label: 'Word or sentence list', recording: 'per_token', randomize: 'blocked',
@@ -14,6 +14,10 @@ export const PRESETS = {
     hint: 'A sequence of pictures to narrate. You get one continuous recording plus a separate file for each slide.' },
   interview: { label: 'Interview or open questions', recording: 'continuous', randomize: false,
     hint: 'Questions shown one by one during a conversation, recorded continuously.' },
+  text_questions: { label: 'Text answers (questionnaire)', recording: 'none', randomize: false,
+    hint: 'Questions answered by typing, such as background information (age, place of birth, languages). Answers are saved in responses.csv.' },
+  multiple_choice: { label: 'Multiple choice', recording: 'none', randomize: false,
+    hint: 'Questions answered by choosing one option or several. Answers are saved in responses.csv.' },
   info: { label: 'Information only', recording: 'none', randomize: false,
     hint: 'Introductions, instructions or practice explanations. Slides are shown but nothing is recorded.' },
   custom: { label: 'Custom', recording: 'per_token', randomize: false,
@@ -74,9 +78,13 @@ function resolve(path) {
 }
 function resetUrls() { if (urls) for (const u of urls.values()) if (u) URL.revokeObjectURL(u); urls = new Map(); }
 
+// Default task names shown to participants, in the protocol's language
+const TASK_NAMES_ES = {"word_list": "Lista de palabras", "picture_naming": "Denominación de imágenes", "reading": "Lectura", "story": "Narración con imágenes", "interview": "Conversación", "text_questions": "Cuestionario", "multiple_choice": "Preguntas de opción múltiple", "info": "Información", "custom": "Nueva tarea"};
+const defaultTaskName = (key) => (draft && draft.language === 'es' ? TASK_NAMES_ES[key] : null) || (key === 'custom' ? 'New task' : (PRESETS[key] || PRESETS.custom).label);
+const isDefaultName = (label) => !label || label === 'New task' || Object.values(PRESETS).some((x) => x.label === label) || Object.values(TASK_NAMES_ES).includes(label);
 function newTask(presetKey = 'custom', label) {
   const p = PRESETS[presetKey] || PRESETS.custom;
-  return { uid: uid(), task: '', label: label || (presetKey === 'custom' ? 'New task' : p.label), preset: presetKey, recording: p.recording, randomize: p.randomize, repetitions: 1, instructions: '', slides: [] };
+  return { uid: uid(), task: '', label: label || defaultTaskName(presetKey), preset: presetKey, recording: p.recording, randomize: p.randomize, repetitions: 1, instructions: '', slides: [] };
 }
 const taskOf = (tuid) => draft.tasks.find((t) => t.uid === tuid);
 function findSlide(suid) { for (const t of draft.tasks) { const i = t.slides.findIndex((s) => s.uid === suid); if (i >= 0) return { task: t, index: i, slide: t.slides[i] }; } return null; }
@@ -191,17 +199,20 @@ function renderTask(t, i) {
     <label class="field"><span>Instructions screen before the task <em>(optional)</em></span><textarea data-f="instructions" rows="2" placeholder="e.g. Read each sentence aloud, at your normal pace.">${esc(t.instructions)}</textarea></label>
     <div class="slides-grid">${t.slides.map((s, j) => renderSlideCard(s, j, t)).join('') || '<div class="empty small">No slides yet. Add slides with the buttons below.</div>'}</div>
     <div class="add-row"><span class="muted">Add slides:</span>
-      <button class="btn" data-a="add-text">Text</button>
+      ${['text_questions', 'multiple_choice'].includes(t.preset) ? `<button class="btn primary" data-a="add-question">Question</button>
+      ${t.preset === 'text_questions' ? '<button class="btn" data-a="add-bg">Sample background questions</button>' : ''}
+      <button class="btn" data-a="add-text">Text</button>` : `<button class="btn" data-a="add-text">Text</button>
       <button class="btn" data-a="add-images">Pictures</button>
       <button class="btn" data-a="add-words">Word list</button>
-      <button class="btn" data-a="add-deck">PowerPoint or PDF</button></div>
+      <button class="btn" data-a="add-deck">PowerPoint or PDF</button>
+      <button class="btn" data-a="add-question">Question</button>`}</div>
   </div>`;
 }
 
 function renderSlideCard(s, j, t) {
-  const kindLabel = s.kind === 'pptx' ? 'PowerPoint' : s.kind === 'image' ? 'Picture' : 'Text';
+  const kindLabel = s.kind === 'pptx' ? 'PowerPoint' : s.kind === 'image' ? 'Picture' : s.kind === 'question' ? 'Question' : 'Text';
   return `<div class="sl ${selected.has(s.uid) ? 'sel' : ''}" data-s="${s.uid}">
-    <div class="thumb-in ${s.kind === 'pptx' ? 'is-pptx' : ''}" data-a="edit">${renderSlide(s, resolve)}</div>
+    <div class="thumb-in ${s.kind === 'pptx' ? 'is-pptx' : ''}" data-a="edit">${renderSlide(s, resolve, { texts: QUESTION_TEXT[draft.language] || QUESTION_TEXT.en })}</div>
     <button class="sl-check" data-a="sel" aria-label="Select slide">${selected.has(s.uid) ? '✓' : ''}</button>
     <div class="sl-meta"><b>${j + 1}</b><span title="${esc(s.label || '')}">${esc(s.id)}</span><em>${kindLabel}</em></div>
     <div class="sl-actions">
@@ -240,7 +251,7 @@ function bind() {
     if (f === 'preset') {
       t.preset = e.target.value;
       const p = PRESETS[t.preset];
-      if (p) { t.recording = p.recording; t.randomize = p.randomize; if (!t.label || t.label === 'New task' || Object.values(PRESETS).some((x) => x.label === t.label)) t.label = p.label; }
+      if (p) { t.recording = p.recording; t.randomize = p.randomize; if (isDefaultName(t.label)) t.label = defaultTaskName(t.preset); }
     }
     if (f === 'recording') t.recording = e.target.value;
     if (f === 'randomize') t.randomize = e.target.value === 'false' ? false : e.target.value;
@@ -279,8 +290,10 @@ function bind() {
       case 'add-images': return pickFiles(t.uid, 'images');
       case 'add-words': return addWordList(t);
       case 'add-deck': return pickFiles(t.uid, 'deck');
+      case 'add-question': return editQuestion(t, null, t.preset === 'multiple_choice' ? 'single' : 'short');
+      case 'add-bg': return addBackgroundQuestions(t);
       case 'sel': { const id = found.slide.uid; if (selected.has(id)) selected.delete(id); else selected.add(id); return render(); }
-      case 'edit': return editSlide(found.task, found.slide);
+      case 'edit': return found.slide.kind === 'question' ? editQuestion(found.task, found.slide) : editSlide(found.task, found.slide);
       case 'left': case 'right': {
         const arr = found.task.slides, i = found.index, j = a === 'left' ? i - 1 : i + 1;
         [arr[i], arr[j]] = [arr[j], arr[i]]; markDirty(); return render();
@@ -535,6 +548,93 @@ async function editSlide(t, slide) {
   s.id = uniqueId(t, idVal || s.label || 's', slide || s);
   if (isNew) t.slides.push(s);
   else Object.assign(slide, s);
+  markDirty(); render();
+}
+
+// ---------- questions ----------
+const BACKGROUND = {
+  en: [
+    { qtype: 'number', md: '## How old are you?', id: 'age', required: true },
+    { qtype: 'short', md: '## Where were you born?', placeholder: 'City, country', id: 'birthplace' },
+    { qtype: 'short', md: '## Where did you grow up?', placeholder: 'City, country', id: 'grew_up' },
+    { qtype: 'single', md: '## Which language did you learn first at home?', options: ['English', 'Spanish', 'Both'], other: true, id: 'first_language' },
+    { qtype: 'multiple', md: '## Which languages do you speak?', options: ['English', 'Spanish', 'French', 'Portuguese'], other: true, id: 'languages' },
+    { qtype: 'single', md: '## What is the highest level of education you have completed?', options: ['Primary school', 'Secondary school', 'Vocational training', 'University degree', 'Postgraduate degree'], id: 'education' },
+    { qtype: 'long', md: '## Is there anything else about your languages you would like to tell us?', id: 'comments' },
+  ],
+  es: [
+    { qtype: 'number', md: '## ¿Cuántos años tienes?', id: 'edad', required: true },
+    { qtype: 'short', md: '## ¿Dónde naciste?', placeholder: 'Ciudad, país', id: 'lugar_nacimiento' },
+    { qtype: 'short', md: '## ¿Dónde creciste?', placeholder: 'Ciudad, país', id: 'lugar_crianza' },
+    { qtype: 'single', md: '## ¿Qué lengua aprendiste primero en casa?', options: ['Español', 'Inglés', 'Las dos'], other: true, id: 'primera_lengua' },
+    { qtype: 'multiple', md: '## ¿Qué lenguas hablas?', options: ['Español', 'Inglés', 'Catalán', 'Euskera', 'Gallego'], other: true, id: 'lenguas' },
+    { qtype: 'single', md: '## ¿Cuál es el nivel de estudios más alto que has completado?', options: ['Educación primaria', 'Educación secundaria', 'Formación profesional', 'Grado universitario', 'Posgrado'], id: 'estudios' },
+    { qtype: 'long', md: '## ¿Quieres contarnos algo más sobre las lenguas que hablas?', id: 'comentarios' },
+  ],
+};
+
+function addBackgroundQuestions(t) {
+  const list = BACKGROUND[draft.language] || BACKGROUND.en;
+  for (const q of list) {
+    const s = { uid: uid(), kind: 'question', options: [], other: false, required: false, placeholder: '', ...q, label: plainText(q.md) };
+    s.id = uniqueId(t, q.id, s);
+    t.slides.push(s);
+  }
+  markDirty(); render();
+  A.toast(`Added ${list.length} questions: edit or delete the ones you don’t need`);
+}
+
+async function editQuestion(t, slide, defaultType = 'short') {
+  const isNew = !slide;
+  const s = slide ? { ...slide, options: [...(slide.options || [])] } : { uid: uid(), kind: 'question', qtype: defaultType, md: '', options: [], other: false, required: false, placeholder: '', id: '', label: '' };
+  const texts = QUESTION_TEXT[draft.language] || QUESTION_TEXT.en;
+  const m = document.createElement('div');
+  m.className = 'modal-back';
+  m.innerHTML = `<div class="modal wide edit-slide"><h3>${isNew ? 'New question' : 'Edit question'}</h3>
+    <div class="es-cols">
+      <div class="es-form">
+        <label class="field"><span>Question</span><textarea id="eq-md" rows="3" placeholder="## Where were you born?">${esc(s.md)}</textarea>
+          <small>Start with <code>##</code> to show it as a heading. A blank line starts a new paragraph.</small></label>
+        <label class="field"><span>Type of answer</span><select id="eq-type">${Object.entries(QUESTION_TYPES).map(([k, l]) => `<option value="${k}" ${s.qtype === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field eq-choice"><span>Options, one per line</span><textarea id="eq-opts" rows="5" placeholder="Spanish&#10;English&#10;Both">${esc(s.options.join('\n'))}</textarea></label>
+        <label class="check eq-choice"><input type="checkbox" id="eq-other" ${s.other ? 'checked' : ''}> <span>Add “${esc(texts.other)}” with a box to type in</span></label>
+        <label class="field eq-text"><span>Hint inside the answer box <em>(optional)</em></span><input id="eq-ph" value="${esc(s.placeholder || '')}" placeholder="${esc(texts.typeHere)}"></label>
+        <label class="check"><input type="checkbox" id="eq-req" ${s.required ? 'checked' : ''}> <span>Required: the participant can’t continue without answering</span></label>
+        <label class="field"><span>Item ID</span><input id="eq-id" value="${esc(s.id)}" placeholder="automatic"><small>The column name in responses.csv. Letters, numbers and _ only.</small></label>
+      </div>
+      <div class="es-preview"><span class="muted small">Preview (you can try it)</span><div class="thumb-in big q-preview" id="eq-prev"></div></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" data-r="0">Cancel</button><button class="btn primary" data-r="1">${isNew ? 'Add question' : 'Save question'}</button></div></div>`;
+  document.body.appendChild(m);
+  const $m = (sel) => m.querySelector(sel);
+  const refresh = () => {
+    const choice = s.qtype === 'single' || s.qtype === 'multiple';
+    m.querySelectorAll('.eq-choice').forEach((el) => { el.hidden = !choice; });
+    m.querySelectorAll('.eq-text').forEach((el) => { el.hidden = choice; });
+    $m('#eq-prev').innerHTML = renderSlide({ ...s, md: s.md || '## …' }, resolve, { interactive: true, texts });
+  };
+  $m('#eq-md').addEventListener('input', (e) => { s.md = e.target.value; refresh(); });
+  $m('#eq-type').addEventListener('change', (e) => { s.qtype = e.target.value; refresh(); });
+  $m('#eq-opts').addEventListener('input', (e) => { s.options = e.target.value.split('\n').map((x) => x.trim()).filter(Boolean); refresh(); });
+  $m('#eq-other').addEventListener('change', (e) => { s.other = e.target.checked; refresh(); });
+  $m('#eq-ph').addEventListener('input', (e) => { s.placeholder = e.target.value; refresh(); });
+  $m('#eq-req').addEventListener('change', (e) => { s.required = e.target.checked; refresh(); });
+  refresh();
+  setTimeout(() => $m('#eq-md').focus(), 50);
+  while (true) {
+    const ok = await new Promise((r) => { const h = (e) => { const b = e.target.closest('[data-r]'); if (b) { m.removeEventListener('click', h); r(b.dataset.r === '1'); } }; m.addEventListener('click', h); });
+    if (!ok) { m.remove(); return; }
+    const choice = s.qtype === 'single' || s.qtype === 'multiple';
+    if (!s.md.trim()) { A.toast('Write the question first', 'err'); continue; }
+    if (choice && s.options.length < (s.other ? 1 : 2)) { A.toast('Add at least two options (one per line)', 'err'); continue; }
+    break;
+  }
+  const idVal = $m('#eq-id').value;
+  m.remove();
+  if (!(s.qtype === 'single' || s.qtype === 'multiple')) { s.options = []; s.other = false; } else s.placeholder = '';
+  s.label = plainText(s.md).slice(0, 120);
+  s.id = uniqueId(t, idVal || s.label, slide || s);
+  if (isNew) t.slides.push(s); else Object.assign(slide, s);
   markDirty(); render();
 }
 

@@ -7,10 +7,11 @@ A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitatio
 - **Audio:** mono WAV at the device's native sample rate or resampled (48,000, 44,100, 22,050 or 16,000 Hz), as 16-bit, 24-bit or 32-bit float.
 - **Export:** a ZIP with the WAV files, Praat TextGrids for continuous tasks, `trials.csv` and `session.json`.
 - **Protocol editor in the app:** build protocols step by step (task types, text, pictures, word lists) without writing any files.
+- **Questions without audio:** short text, long text, number, single choice and multiple choice (optionally with “Other” and required), for background questionnaires. Answers are exported in `responses.csv`.
 - **PowerPoint and PDF import:** slides from a `.pptx` are reproduced in the browser (navigation buttons hidden, images optimized); a PDF gives a pixel-exact copy.
 - **Built-in Guide** (home screen → Guide): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
 
-> **Prototype (v0.3.0).** Test it on your own iPad before using it with participants.
+> **Prototype (v0.4.0).** Test it on your own iPad before using it with participants.
 
 ---
 
@@ -28,7 +29,7 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 2. **Share → Add to Home Screen**.
 3. Always open it from that icon. The first time, it asks for microphone access.
 
-**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.3.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
 
 ---
 
@@ -36,7 +37,7 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 
 There are three ways, from easiest to most technical:
 
-1. **The editor** (Protocols → New protocol). Add tasks by type (word list, picture naming, reading passage, story from pictures, interview, information only), which sets the recording mode and order. Add slides as text, pictures, a pasted word list, or a PowerPoint/PDF. Select slides and move them between tasks. Saved protocols are stored as `protocol.json` plus media files; **Download .zip** exports them for backup or for another iPad.
+1. **The editor** (Protocols → New protocol). Add tasks by type (word list, picture naming, reading passage, story from pictures, interview, text answers, multiple choice, information only), which sets the recording mode and order. Add slides as text, pictures, a pasted word list, or a PowerPoint/PDF. Select slides and move them between tasks. Saved protocols are stored as `protocol.json` plus media files; **Download .zip** exports them for backup or for another iPad.
 2. **A PowerPoint presentation** (Protocols → From PowerPoint or PDF). Each slide is reproduced as positioned HTML: text boxes and placeholders (inheriting from layouts and masters), tables (including PowerPoint's default table style), pictures (cropping, transparency), preset and custom shapes, connectors, groups and backgrounds. Shapes with a "next/previous slide" action are hidden, hidden slides are skipped, PowerPoint sections can become tasks, and footer codes (if they identify the slides) become item IDs. Images are downscaled to about 2.2× the size they're shown at. Animations, transitions, video, charts and SmartArt are not reproduced; exporting the deck as **PDF** gives an exact copy (each page becomes a picture slide, rendered with pdf.js on the device).
 3. **Markdown/CSV files**, described below. The in-app Guide has a beginner tutorial with templates to copy.
 
@@ -109,6 +110,15 @@ Spanish key names (`tarea`, `grabacion`, `aleatorio`, `repeticiones`, `instrucci
 - Basic Markdown: `#`, `##`, `###`, paragraphs, **bold**, *italics*, `==highlight==` and lists.
 - Images with `![alt](img/photo.jpg)`. Several images on the same line are shown side by side.
 - `<!-- id: name -->` sets the item ID used in file names and the TextGrid. Without it, the ID is generated from the text.
+- `<!-- question: TYPE -->` turns the slide into a question answered on screen (no audio). TYPE is `short`, `long`, `number`, `single` or `multiple`, optionally followed by `; required` and/or `; other`. For `single` and `multiple`, each line starting with `-` is an option:
+
+  ```markdown
+  <!-- question: single; other -->
+  <!-- id: first_language -->
+  ## Which language did you learn first at home?
+  - English
+  - Spanish
+  ```
 - A slide containing only a heading (`# word`) is shown very large. Text always shrinks to fit the screen.
 
 ### CSV
@@ -174,6 +184,7 @@ Sessions → **Export** → **Share / Save to Files** (AirDrop, OneDrive, the Fi
 P01_s1_2026-11-22/
   audio/          WAV and TextGrid files
   trials.csv      one row per take or interval (onset, offset and duration in s, sample rate, bit depth, clipping)
+  responses.csv   answers to questions, if any (id, type, answer, time; choices joined with " | ")
   session.json    participant code, consent, requested and obtained audio settings,
                   seed and presentation order, interruptions, device information
   protocol/       copy of the protocol text files used
@@ -200,7 +211,7 @@ Recordings exist **only on the device**, in the browser's storage for this websi
 - Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
 - Deleting a session requires confirming that the export has been saved, and every deletion is logged.
 
-## Known limitations (v0.3.0)
+## Known limitations (v0.4.0)
 
 - Mono only.
 - A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.
