@@ -1,195 +1,219 @@
 # Fieldrec
 
-Web app para trabajo de campo: muestra las tareas (slides) de un protocolo y graba en WAV sin comprimir. Está pensada para iPad mini (en vertical y en horizontal) y funciona sin conexión una vez instalada en la pantalla de inicio.
+A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitation protocol and records uncompressed WAV audio. Designed for iPad mini in portrait and landscape, hosted on GitHub Pages, and usable offline once added to the Home Screen.
 
-- Sin servidor y sin recursos externos: GitHub Pages solo sirve el código. Las grabaciones se quedan en el dispositivo hasta que las exportas.
-- Grabación **por token**, **continua** o **continua con cortes** (configurable en cada tarea).
-- WAV mono a la frecuencia nativa o remuestreado (48 000, 44 100, 22 050 o 16 000 Hz), a 16 bits, 24 bits o 32 bits float.
-- Exportación en ZIP con los WAV, TextGrid de Praat para las tareas continuas, `trials.csv` y `session.json`.
+- **No server and no external resources.** GitHub Pages only serves the code. Recordings stay on the device until you export them.
+- **Recording modes per task:** per token, continuous, or continuous with per-slide cuts.
+- **Audio:** mono WAV at the device's native sample rate or resampled (48,000, 44,100, 22,050 or 16,000 Hz), as 16-bit, 24-bit or 32-bit float.
+- **Export:** a ZIP with the WAV files, Praat TextGrids for continuous tasks, `trials.csv` and `session.json`.
+- **Built-in Guide** (home screen → Guide): getting started, protocol format, accepted file types, data safety and troubleshooting.
 
-> **Prototipo (v0.1.1).** Pruébalo en tu iPad antes de usarlo con participantes.
-
----
-
-## Publicarlo en GitHub Pages
-
-1. Crea un repositorio nuevo (por ejemplo `fieldrec`) y sube **todo el contenido de esta carpeta** a la raíz, incluido el archivo `.nojekyll`.
-2. En el repositorio: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, rama `main`, carpeta `/ (root)`.
-3. Al cabo de un minuto estará en `https://TU-USUARIO.github.io/fieldrec/`.
-
-Para probarlo en local: `python3 -m http.server 8000` dentro de la carpeta y abre `http://localhost:8000`. El micrófono solo funciona en `https://` o en `localhost`.
-
-## Instalarlo en el iPad
-
-1. Abre la URL en **Safari**.
-2. **Compartir → Añadir a pantalla de inicio**.
-3. Ábrela desde el icono. La primera vez pedirá permiso para el micrófono.
-
-Instalada así funciona sin conexión, y Safari es menos propenso a borrar sus datos.
-
-**Para publicar cambios:** sube los archivos nuevos y cambia `CACHE` en `sw.js` (por ejemplo `fieldrec-v0.1.1`). La app instalada descarga la versión nueva en segundo plano y la muestra la siguiente vez que se abre.
+> **Prototype (v0.2.0).** Test it on your own iPad before using it with participants.
 
 ---
 
-## Formato de los protocolos
+## Publish on GitHub Pages
+
+1. Create a repository (e.g. `fieldrec`) and upload **everything in this folder** to its root, including the `.nojekyll` file.
+2. In the repository: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, branch `main`, folder `/ (root)`.
+3. About a minute later it is live at `https://YOUR-USERNAME.github.io/fieldrec/`.
+
+To try it locally, run `python3 -m http.server 8000` inside the folder and open `http://localhost:8000`. The microphone only works over `https://` or on `localhost`.
+
+## Install it on the iPad
+
+1. Open the URL in **Safari**.
+2. **Share → Add to Home Screen**.
+3. Always open it from that icon. The first time, it asks for microphone access.
+
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.2.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+
+---
+
+## Protocol format
 
 ### Markdown (`.md`)
 
-Las slides se separan con una línea que contiene solo `---`. Un bloque formado únicamente por líneas `clave: valor` es una **cabecera**:
+Slides are separated by a line containing only `---`. A block made only of `key: value` lines is a **header**:
 
-- La primera cabecera del archivo, si no tiene `task`, describe el protocolo.
-- Cada cabecera con `task:` empieza una tarea nueva.
+- The first header in the file, if it has no `task`, describes the protocol.
+- Each header with `task:` starts a new task.
 
 ```markdown
 ---
-title: Variación de /b d g/ — Sevilla 2027
-consent: consentimiento.md
+title: /b d g/ lenition — Seville 2027
+language: es
+consent: consent.md
 ---
-task: lista_palabras
-label: Lista de palabras
+task: word_list
+label: Word list
 recording: per_token
 randomize: true
 repetitions: 3
 carrier: Digo {text} otra vez.
-instructions: Lee la frase en voz alta.
-items: palabras.csv
+instructions: Read the sentence aloud.
+items: words.csv
 ---
-task: lectura
+task: reading
 recording: continuous
 ---
-<!-- id: parrafo1 -->
-Texto del primer párrafo…
+<!-- id: paragraph1 -->
+Text of the first paragraph…
 ---
-task: narracion
+task: story
 recording: both
 ---
-![](img/vineta1.png)
+![](img/panel1.png)
 ---
-![](img/vineta1.png) ![](img/vineta2.png) ![](img/vineta3.png)
+![](img/panel1.png) ![](img/panel2.png) ![](img/panel3.png)
 
-## ¿Cómo termina la historia?
+## How does the story end?
 ```
 
-**Claves del protocolo**
+**Protocol keys**
 
-| Clave | Valor |
+| Key | Value |
 |---|---|
-| `title` | Título que aparece en la app y en los metadatos |
-| `consent` | Texto literal o nombre de un archivo `.md` con el consentimiento |
-| `author` | Opcional |
+| `title` | Title shown in the app and in the metadata |
+| `consent` | Literal text, or the name of a `.md` file with the consent form |
+| `language` | `en` (default) or `es`: language of the texts Fieldrec shows the participant (consent checkboxes, “Task 1 of 5”, break and thank-you screens). The rest of the interface is in English |
+| `author` | Optional |
 
-**Claves de la tarea**
+**Task keys**
 
-| Clave | Valores | Por defecto |
+| Key | Values | Default |
 |---|---|---|
-| `task` | Nombre corto, se usa en los archivos (`lista_palabras`) | — |
-| `label` | Nombre visible para el participante | el de `task` |
+| `task` | Short name, used in file names (`word_list`) | — |
+| `label` | Name shown to the participant | the `task` value |
 | `recording` | `per_token`, `continuous`, `both`, `none` | `per_token` |
-| `randomize` | `false`, `true` (aleatorio por bloques de repetición), `full` (todo mezclado) | `false` |
-| `repetitions` | Número de repeticiones de cada slide | 1 |
-| `instructions` | Pantalla de instrucciones antes de empezar (no se graba) | — |
-| `items` | Un CSV cuyas filas se convierten en slides | — |
-| `carrier` | Frase marco; `{text}` se sustituye por el ítem (en negrita) | — |
+| `randomize` | `false`, `true` (shuffled within each repetition block), `full` (everything shuffled) | `false` |
+| `repetitions` | How many times each slide is shown | 1 |
+| `instructions` | Instructions screen shown before the task (not recorded) | — |
+| `items` | A CSV file whose rows become slides | — |
+| `carrier` | Carrier phrase; `{text}` is replaced by the item (in bold) | — |
 
-**Dentro de cada slide**
+Spanish key names (`tarea`, `grabacion`, `aleatorio`, `repeticiones`, `instrucciones`, `frase_marco`, `etiqueta`, `consentimiento`…) are accepted as aliases.
 
-- Markdown básico: `#`, `##`, `###`, párrafos, **negrita**, *cursiva*, `==resaltado==` y listas.
-- Imágenes con `![alt](img/foto.jpg)`. Varias imágenes en la misma línea se muestran en fila.
-- `<!-- id: nombre -->` fija el identificador del ítem en archivos y TextGrid. Si no lo pones, se genera a partir del texto.
-- Una slide con solo un titular (`# palabra`) se muestra a tamaño grande. El texto se ajusta solo para que quepa en pantalla.
+**Inside a slide**
+
+- Basic Markdown: `#`, `##`, `###`, paragraphs, **bold**, *italics*, `==highlight==` and lists.
+- Images with `![alt](img/photo.jpg)`. Several images on the same line are shown side by side.
+- `<!-- id: name -->` sets the item ID used in file names and the TextGrid. Without it, the ID is generated from the text.
+- A slide containing only a heading (`# word`) is shown very large. Text always shrinks to fit the screen.
 
 ### CSV
 
-En un `.csv` (separado por comas, punto y coma o tabuladores), cada fila es una slide. Columnas reconocidas: `text` (o `palabra`, `item`), `id`, `image`, `carrier`. Para un CSV que sea el protocolo completo también se reconocen `task`, `recording`, `randomize`, `repetitions` e `instructions`; los ajustes de cada tarea se toman de su primera fila.
+In a `.csv` (comma, semicolon or tab separated), each row is a slide. Recognized columns: `text` (or `word`, `item`), `id`, `image`, `carrier`. A CSV can also be a whole protocol by adding `task`, `recording`, `randomize`, `repetitions` and `instructions`; each task's settings are taken from its first row.
 
 ```csv
 task,text,recording,randomize
-vocales,pipa,per_token,true
-vocales,papa,,
-vocales,pupa,,
+vowels,pipa,per_token,true
+vowels,papa,,
+vowels,pupa,,
 ```
 
-### Añadir protocolos
+### Adding protocols
 
-- **Incluidos en la web:** crea una carpeta en `protocols/` y añádela a `protocols/index.json`. Si quieres que funcione sin conexión desde el primer momento, añade también sus archivos a la lista `SHELL` de `sw.js`.
-- **Importados en el iPad o el ordenador:** Protocolos → **Importar archivos o .zip**. Hay tres formas:
-  1. **Un .zip con la carpeta del protocolo (recomendado).** En la app Archivos, mantén pulsada la carpeta y elige **Comprimir**. Se respetan las subcarpetas, como `img/`.
-  2. **Una carpeta** (botón **Importar carpeta**, solo en ordenador).
-  3. **Archivos sueltos:** el `.md` o `.csv` y los archivos que usa. Si falta alguno, la app lo indica y puedes añadirlo con **Añadir archivos o .zip**. Los archivos se emparejan por nombre, así que no puede haber dos imágenes que se llamen igual.
+- **Bundled with the website:** create a folder in `protocols/` and add it to `protocols/index.json`. For it to work offline from the start, also add its files to the `SHELL` list in `sw.js`.
+- **Imported on the iPad or a computer:** Protocols → **Import files or .zip**. Three ways:
+  1. **A .zip of the protocol folder (recommended).** In the Files app, long-press the folder and choose **Compress**. Subfolders such as `img/` are kept.
+  2. **A folder** (the **Import folder** button, computers only).
+  3. **Loose files:** the `.md` or `.csv` plus the files it uses. If anything is missing, the app says so and you can add it with **Add files or .zip**. Files are matched by name, so don't use two images with the same name.
 
-  En la vista previa de cualquier protocolo, **Descargar .zip** genera una plantilla lista para editar y volver a importar.
+  In any protocol's preview, **Download .zip** gives you a template you can edit and import again.
 
-Las imágenes tienen que estar en el propio protocolo. Por seguridad, la app bloquea cualquier recurso externo, incluidas las imágenes enlazadas desde otra web.
+Images must be included in the protocol. For privacy, the app blocks anything loaded from other websites, including linked images.
+
+### Accepted file types
+
+| Use | Extensions |
+|---|---|
+| Protocol | `.md` `.markdown` · `.csv` `.tsv` `.txt` |
+| Protocol bundle | `.zip` (stored or deflate-compressed) |
+| Images | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` |
+| Consent text | `.md` `.txt`, or written in the protocol header |
+| Not supported yet | `.pptx` `.ppt` `.key` `.pdf` `.docx` (export the slides as images instead) |
 
 ---
 
-## Modos de grabación
+## Recording modes
 
-| Modo | Qué hace | Archivos |
+| Mode | What it does | Files |
 |---|---|---|
-| `per_token` | Botón de grabar en cada slide. Puedes repetir una toma (se guarda como `_t2`, `_t3`…) | `P01_s1_tarea_03_cada_r2.wav` |
-| `continuous` | Graba toda la tarea de principio a fin y anota cuándo cambia cada slide | `P01_s1_tarea.wav` y `P01_s1_tarea.TextGrid` |
-| `both` | Como `continuous`, más un corte WAV por slide | lo anterior y `P01_s1_tarea_01_vineta1.wav`… |
-| `none` | Solo muestra las slides | — |
+| `per_token` | A record button on every slide. A take can be redone (saved as `_t2`, `_t3`…) | `P01_s1_task_03_cada_r2.wav` |
+| `continuous` | Records the whole task from start to finish, marking each slide change | `P01_s1_task.wav` and `P01_s1_task.TextGrid` |
+| `both` | Like `continuous`, plus one WAV cut per slide | the above plus `P01_s1_task_01_panel1.wav`… |
+| `none` | Only shows the slides | — |
 
-El TextGrid tiene dos tiers: `slide` (identificador) y `texto` (texto de la slide).
+The TextGrid has two tiers: `slide` (item ID) and `texto` (slide text).
 
-**Controles:** *Siguiente* durante una grabación por token la para, la guarda y avanza. Con teclado Bluetooth o mando de presentaciones: → / AvPág (siguiente), ← / RePág (anterior), espacio (grabar o parar en tareas por token) y Esc (menú).
+**Controls:** pressing *Next* while a per-token take is recording stops it, saves it and moves on. With a Bluetooth keyboard or presentation remote: → / Page Down (next), ← / Page Up (previous), Space (record/stop in per-token tasks) and Esc (menu).
 
 ## Audio
 
-- El micrófono se pide **sin cancelación de eco, sin supresión de ruido y sin control automático de ganancia**. La pantalla **Micrófono** muestra lo que el dispositivo ha aceptado realmente, y esa misma información se guarda en `session.json`.
-- La captura se hace a la frecuencia del hardware (normalmente 48 000 Hz en iPad). Si eliges otra, se remuestrea con un filtro sinc con ventana de Kaiser (unos 80 dB de atenuación, banda de paso hasta aproximadamente el 92 % del Nyquist).
-- **Pre-roll / post-roll:** la app guarda siempre el último segundo de audio, así que una toma puede empezar 250 o 500 ms antes de tocar el botón.
-- El medidor se pone rojo si hay saturación, y la saturación queda registrada en cada toma (`clipped` en `trials.csv`).
+- The microphone is requested **without echo cancellation, noise suppression or automatic gain control**. The **Microphone** screen shows what the device actually accepted, and the same information is saved in `session.json`.
+- Audio is captured at the hardware rate (usually 48,000 Hz on iPad). Any other rate is resampled with a Kaiser-windowed sinc filter (about 80 dB stopband attenuation, passband up to about 92% of Nyquist).
+- **Pre-roll / post-roll:** the app always keeps the last second of audio, so a take can start 250 or 500 ms before the record button is tapped.
+- The level meter turns red when the signal clips, and clipping is recorded for each take (`clipped` in `trials.csv`).
 
-## Exportación
+## Export
 
-Sesiones → **Exportar** → **Compartir / Guardar en Archivos** (AirDrop, OneDrive, la app Archivos…) o **Descargar ZIP**.
+Sessions → **Export** → **Share / Save to Files** (AirDrop, OneDrive, the Files app…) or **Download ZIP**.
 
 ```
 P01_s1_2026-11-22/
-  audio/          WAV y TextGrid
-  trials.csv      una fila por toma o intervalo (inicio, fin y duración en s, frecuencia, bits, saturación)
-  session.json    participante, consentimiento, ajustes de audio solicitados y obtenidos,
-                  semilla y orden de presentación, incidencias, información del dispositivo
-  protocolo/      copia de los archivos de texto del protocolo usados
-  LEEME.txt
+  audio/          WAV and TextGrid files
+  trials.csv      one row per take or interval (onset, offset and duration in s, sample rate, bit depth, clipping)
+  session.json    participant code, consent, requested and obtained audio settings,
+                  seed and presentation order, interruptions, device information
+  protocol/       copy of the protocol text files used
+  README.txt
 ```
 
-**Registro** (en Sesiones) guarda cuándo se creó, completó, exportó o borró cada sesión, sin audio. Se puede exportar como CSV.
+The **Log** (in Sessions) records when each session was created, completed, exported or deleted, without any audio. It can be exported as CSV.
 
-## Notas para el protocolo IRB
+## Data safety
 
-- La app es un sitio estático: no envía datos a ningún servidor, no usa analítica y no carga código ni recursos externos (lo impone su Content Security Policy).
-- Las grabaciones se guardan en el almacenamiento local de Safari en el dispositivo, protegido por el cifrado de iOS si el dispositivo tiene código de desbloqueo.
-- Los archivos solo llevan el código de participante.
-- El consentimiento registra por separado la participación, la grabación y el archivo para uso futuro, con fecha y hora. Opcionalmente se puede grabar el consentimiento verbal.
-- Para borrar una sesión hay que confirmar antes que la exportación está guardada, y el borrado queda en el registro.
+Recordings exist **only on the device**, in the browser's storage for this website. Exporting is the only backup.
 
-## Limitaciones conocidas (v0.1.1)
+- **Safari tabs:** Safari deletes all data a website has stored after 7 days of Safari use without visiting that site. Don't collect data from a Safari tab.
+- **Home Screen app:** it has its own storage and its own usage counter, so the 7-day rule doesn't affect it in practice. But deleting the Home Screen icon deletes its data, the Safari tab and the Home Screen app don't share storage, and the system can evict website data when the device runs very low on space.
+- **Private browsing** keeps nothing once the tab is closed.
+- **During recording:** a continuous task is kept in memory until it ends, so a crash or closing the app mid-task loses that task. Per-token takes are saved one by one.
+- **Good practice:** export after every session, check the ZIP on a computer before deleting the session from the iPad, and use Airplane mode or a Focus mode during sessions.
 
-- Solo mono.
-- Una tarea continua se mantiene en memoria hasta que termina. Conviene que cada tarea continua no pase de unos 30–40 minutos. Si Safari se cierra en mitad de una tarea continua, esa tarea se pierde; las tomas por token se guardan una a una.
-- iOS detiene el audio si la app pasa a segundo plano o se bloquea la pantalla. La app intenta mantener la pantalla encendida, registra la interrupción y pide tocar para reanudar.
-- Todavía no importa PDF ni PPTX, y no cifra la exportación con contraseña.
-- La interfaz de iPhone está por adaptar.
+## Notes for an IRB protocol
 
-## Estructura del código
+- The app is a static website: it sends no data to any server, uses no analytics and loads no external code or resources (enforced by its Content Security Policy).
+- Recordings are stored in Safari's local storage on the device, protected by iOS encryption when the device has a passcode.
+- Files carry only the participant code.
+- Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
+- Deleting a session requires confirming that the export has been saved, and every deletion is logged.
+
+## Known limitations (v0.2.0)
+
+- Mono only.
+- A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.
+- iOS stops the audio if the app goes to the background or the screen locks. The app tries to keep the screen on, logs the interruption and asks you to tap to resume.
+- PDF and PPTX import is not available yet, and exports are not password-protected.
+- The iPhone layout is not adapted yet.
+
+## Code structure
 
 ```
-index.html              página única
-css/app.css             estilos (iPad mini en vertical y horizontal)
-js/app.js               interfaz y flujo de la sesión
-js/audio.js             micrófono, pre-roll y medidor
-js/recorder-worklet.js  AudioWorklet de captura
-js/dsp.js               remuestreo y codificación WAV
-js/wav-worker.js        worker que remuestrea y codifica sin bloquear la interfaz
-js/protocol.js          lector de Markdown y CSV y aleatorización
+index.html              single page
+css/app.css             styles (iPad mini portrait and landscape)
+js/app.js               interface and session flow
+js/guide.js             content of the Guide screen
+js/audio.js             microphone, pre-roll and level meter
+js/recorder-worklet.js  capture AudioWorklet
+js/dsp.js               resampling and WAV encoding
+js/wav-worker.js        worker that resamples and encodes without blocking the interface
+js/protocol.js          Markdown and CSV reader, randomization
 js/db.js                IndexedDB
-js/zip.js               generador de ZIP
-js/unzip.js             lector de ZIP (importación de protocolos)
-js/textgrid.js          TextGrid de Praat
-sw.js                   caché para usarla sin conexión
-protocols/              protocolos incluidos (index.json + carpetas)
+js/zip.js               ZIP writer
+js/unzip.js             ZIP reader (protocol import)
+js/textgrid.js          Praat TextGrid
+sw.js                   offline cache
+protocols/              bundled protocols (index.json + folders)
 ```

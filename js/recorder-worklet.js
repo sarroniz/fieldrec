@@ -1,6 +1,6 @@
-// AudioWorklet: copia el audio del micrófono (canal 0) en bloques y los envía al hilo principal.
-// Cada bloque lleva su pico (para el medidor) y el número de frame del contexto en que termina.
-const BLOCK = 2048; // múltiplo de 128 → el bloque siempre se llena al final de un quantum
+// AudioWorklet: copies microphone audio (channel 0) into blocks and posts them to the main thread.
+// Each block carries its peak (for the meter) and the context frame at which it ends.
+const BLOCK = 2048; // multiple of 128 → a block always fills at the end of a render quantum
 
 class CaptureProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -22,7 +22,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
         if (a > this.peak) this.peak = a;
         if (a >= 0.999) this.clipped = true;
         if (this.pos === BLOCK) {
-          // currentFrame es el inicio de este quantum; el bloque termina en el frame del último sample + 1
+          // currentFrame is the start of this quantum; the block ends at the last sample's frame + 1
           const endFrame = currentFrame + i + 1;
           this.port.postMessage(
             { samples: this.buf, peak: this.peak, clipped: this.clipped, endFrame },

@@ -4,14 +4,15 @@ import { unzip } from './unzip.js';
 import { db } from './db.js';
 import { makeZip } from './zip.js';
 import { makeTextGrid } from './textgrid.js';
+import { guideHTML } from './guide.js';
 
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.2.0';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
-let run = null;           // sesión en curso
+let run = null;            // session in progress
 let preparedExport = null; // { sessionId, file }
 
-// ---------- utilidades ----------
+// ---------- utilities ----------
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -19,12 +20,26 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now()
 const pad = (n, w = 2) => String(n).padStart(w, '0');
 const fmtBytes = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`;
 const fmtClock = (s) => `${pad(Math.floor(s / 60))}:${pad(Math.floor(s % 60))}`;
-const fmtDate = (iso) => { try { return new Date(iso).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }); } catch (_) { return iso; } };
+const fmtDate = (iso) => { try { return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }); } catch (_) { return iso; } };
 const safeName = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
 const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+// Texts the participant sees follow the protocol's `language` key (en, es); the rest of the interface is English.
+const PARTICIPANT_TEXT = {
+  en: { taskOf: (i, n) => `Task ${i} of ${n}`, taskDone: 'Task complete', pause: 'Break', end: 'End of session',
+    next: (t) => `Next: <b>${t}</b>`, thanks: 'Thank you for taking part!',
+    c1: 'I agree to take part in this study.', c2: 'I agree to have my voice recorded.',
+    c3: 'I agree that the recording may be archived for future research (optional).' },
+  es: { taskOf: (i, n) => `Tarea ${i} de ${n}`, taskDone: 'Tarea completada', pause: 'Pausa', end: 'Fin de la sesión',
+    next: (t) => `Siguiente: <b>${t}</b>`, thanks: '¡Muchas gracias por tu participación!',
+    c1: 'Acepto participar en este estudio.', c2: 'Acepto que se grabe mi voz.',
+    c3: 'Acepto que la grabación se archive para investigaciones futuras (opcional).' },
+};
+const ptext = (proto) => PARTICIPANT_TEXT[String((proto && proto.meta && proto.meta.language) || 'en').slice(0, 2).toLowerCase()] || PARTICIPANT_TEXT.en;
 
 const SETTINGS_KEY = 'fieldrec.settings';
-const DEFAULTS = { sampleRate: 'native', bitDepth: 16, prerollMs: 250, postrollMs: 250, autoAdvance: false, researcher: '', location: '' };
+const DEFAULTS = { sampleRate: 'native', bitDepth: 16, prerollMs: 250, postrollMs: 250, autoAdvance: false, researcher: '', location: '', seenGuide: false };
 function loadSettings() { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch (_) { return { ...DEFAULTS }; } }
 function saveSettings(s) { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {} }
 let settings = loadSettings();
@@ -38,7 +53,7 @@ function toast(msg, kind = '') {
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2600);
 }
 
-function modal({ title, body = '', ok = 'Aceptar', cancel = 'Cancelar', danger = false, requireCheck = '' }) {
+function modal({ title, body = '', ok = 'OK', cancel = 'Cancel', danger = false, requireCheck = '' }) {
   return new Promise((resolve) => {
     const m = document.createElement('div');
     m.className = 'modal-back';
@@ -68,7 +83,19 @@ function setScreen(html, cls = '') {
   window.scrollTo(0, 0);
 }
 
-// ---------- protocolos ----------
+async function storageLine() {
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+      return `${fmtBytes(est.usage || 0)} used · ${persisted ? 'persistent storage' : 'storage not persistent'}`;
+    }
+  } catch (_) {}
+  return 'storage usage unknown';
+}
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// ---------- protocols: sources ----------
 async function listProtocols() {
   const out = [];
   try {
@@ -86,7 +113,7 @@ async function listProtocols() {
 
 const isAbs = (s) => /^(https?:|data:|blob:)/i.test(s);
 
-// Rutas dentro de un protocolo importado: sin "./", sin barras iniciales, con ".." resuelto.
+// Paths inside an imported protocol: no "./", no leading slashes, ".." resolved.
 function normPath(p) {
   const out = [];
   for (const seg of String(p || '').replace(/\\/g, '/').split('/')) {
@@ -97,10 +124,10 @@ function normPath(p) {
 }
 const baseName = (p) => normPath(p).split('/').pop();
 const dirName = (p) => { const n = normPath(p); return n.includes('/') ? n.slice(0, n.lastIndexOf('/')) : ''; };
-// Los archivos se guardan como { type, data: ArrayBuffer } (más fiable que Blob en IndexedDB de Safari)
+// Files are stored as { type, data: ArrayBuffer } (more reliable than Blob in Safari's IndexedDB)
 const toBlob = (v) => (v instanceof Blob ? v : new Blob([v.data], { type: v.type || '' }));
 const missingImg = (name) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect x="4" y="4" width="392" height="292" rx="16" fill="#fbf1d6" stroke="#9a6a00" stroke-width="4" stroke-dasharray="14 10"/><text x="200" y="140" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="26" fill="#6b4b00">Falta la imagen</text><text x="200" y="180" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="22" fill="#6b4b00">${esc(baseName(name)).slice(0, 30)}</text></svg>`);
+  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect x="4" y="4" width="392" height="292" rx="16" fill="#fbf1d6" stroke="#9a6a00" stroke-width="4" stroke-dasharray="14 10"/><text x="200" y="140" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="26" fill="#6b4b00">Missing image</text><text x="200" y="180" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="22" fill="#6b4b00">${esc(baseName(name)).slice(0, 30)}</text></svg>`);
 
 function sourceFor(entry) {
   if (entry.kind === 'builtin') {
@@ -108,7 +135,7 @@ function sourceFor(entry) {
     const base = new URL('.', mainURL);
     return {
       mainName: decodeURIComponent(mainURL.pathname.split('/').pop()),
-      readText: async (name) => { const r = await fetch(new URL(name, base)); if (!r.ok) throw new Error(name); return r.text(); },
+      readText: async (name) => { const r = await fetch(new URL(name, base)); if (!r.ok) throw new Error(`“${name}” not found (HTTP ${r.status})`); return r.text(); },
       resolve: (src) => (isAbs(src) ? src : new URL(src, base).href),
       has: null,
     };
@@ -121,13 +148,17 @@ function sourceFor(entry) {
     if (!byBase.has(b)) byBase.set(b, v);
   }
   const mainDir = dirName(entry.record.mainName);
-  // 1) ruta relativa al archivo principal, 2) ruta tal cual, 3) solo el nombre de archivo
+  // 1) path relative to the main file, 2) path as written, 3) file name only
   const find = (name) => byPath.get(normPath((mainDir ? mainDir + '/' : '') + name).toLowerCase())
     || byPath.get(normPath(name).toLowerCase()) || byBase.get(baseName(name).toLowerCase());
   const urls = {};
   return {
     mainName: entry.record.mainName,
-    readText: async (name) => { const v = find(name); if (!v) throw new Error(name); return toBlob(v).text(); },
+    readText: async (name) => {
+      const v = find(name);
+      if (!v) throw new Error(`“${name}” is not among the imported files`);
+      return toBlob(v).text();
+    },
     resolve: (src) => {
       if (isAbs(src)) return src;
       if (!(src in urls)) { const v = find(src); urls[src] = v ? URL.createObjectURL(toBlob(v)) : missingImg(src); }
@@ -137,7 +168,31 @@ function sourceFor(entry) {
   };
 }
 
+// Converts files that v0.1.0 stored as Blob to the current format.
+// Safari can lose those Blobs on reload: unreadable files are reported.
+async function migrateRecord(rec) {
+  const unreadable = [];
+  let changed = false;
+  for (const [n, v] of Object.entries(rec.files || {})) {
+    if (v instanceof Blob) {
+      try { rec.files[n] = { type: v.type, data: await v.arrayBuffer() }; changed = true; }
+      catch (_) { unreadable.push(n); }
+    } else if (!v || !(v.data instanceof ArrayBuffer)) unreadable.push(n);
+  }
+  if (changed && !unreadable.length) { try { await db.put('protocols', rec); } catch (_) {} }
+  return unreadable;
+}
+
+class UnreadableProtocol extends Error {}
+
 async function loadProtocolEntry(entry) {
+  if (entry.kind === 'imported') {
+    const unreadable = await migrateRecord(entry.record);
+    if (unreadable.length) {
+      throw new UnreadableProtocol(`The browser can no longer read ${unreadable.length === 1 ? 'the stored file' : unreadable.length + ' stored files'} (${unreadable.slice(0, 3).join(', ')}${unreadable.length > 3 ? '…' : ''}).`);
+    }
+    if (!Object.keys(entry.record.files || {}).length) throw new UnreadableProtocol('The stored protocol contains no files.');
+  }
   const src = sourceFor(entry);
   const texts = {};
   const proto = await parseProtocol({
@@ -155,50 +210,47 @@ async function loadProtocolEntry(entry) {
   return proto;
 }
 
-// ---------- INICIO ----------
+// ---------- HOME ----------
 async function screenHome() {
   stopMeterLoop();
-  const [sessions, protocols] = await Promise.all([db.all('sessions').catch(() => []), listProtocols()]);
+  const [sessions, protocols, storage] = await Promise.all([db.all('sessions').catch(() => []), listProtocols(), storageLine()]);
   const pending = sessions.filter((s) => !s.exportedAt).length;
-  let storage = '';
-  try {
-    if (navigator.storage && navigator.storage.estimate) {
-      const est = await navigator.storage.estimate();
-      const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
-      storage = `${fmtBytes(est.usage || 0)} usados · ${persisted ? 'almacenamiento persistente' : 'almacenamiento no persistente'}`;
-    }
-  } catch (_) {}
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const standalone = isStandalone();
 
   setScreen(`
     <div class="page home">
       <header class="brand">
         <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-        <div><h1>Fieldrec</h1><p>Grabación y tareas para trabajo de campo</p></div>
+        <div><h1>Fieldrec</h1><p>Recording and elicitation tasks for fieldwork</p></div>
       </header>
-      ${!AudioEngine.supported() ? `<div class="notice warn">Este navegador no permite grabar audio con la calidad necesaria. Usa Safari actualizado (iPadOS 15 o posterior).</div>` : ''}
-      ${!standalone ? `<div class="notice">Para usarla sin conexión y proteger mejor los datos, añádela a la pantalla de inicio: botón <b>Compartir</b> → <b>Añadir a pantalla de inicio</b>.</div>` : ''}
+      ${!AudioEngine.supported() ? `<div class="notice warn">This browser can’t record audio at the quality Fieldrec needs. Use an up-to-date Safari (iPadOS 15 or later).</div>` : ''}
+      ${!standalone ? `<div class="notice warn"><b>You’re using Fieldrec in a browser tab.</b> Safari deletes a website’s data after 7 days without use, recordings included. Before collecting data, add it to the Home Screen (<b>Share → Add to Home Screen</b>) and open it from there. <a href="#" data-go="guide" data-anchor="g-data">Why?</a></div>` : ''}
+      ${!settings.seenGuide ? `<div class="notice">New to Fieldrec? Read the <a href="#" data-go="guide">Guide</a>: getting started, protocol format and how to keep your data safe.</div>` : ''}
       <div class="grid">
         <button class="card primary" data-go="setup">
-          <span class="card-ico">●</span><span class="card-t">Nueva sesión</span>
-          <span class="card-s">Elegir protocolo y participante</span>
+          <span class="card-ico">●</span><span class="card-t">New session</span>
+          <span class="card-s">Choose a protocol and a participant</span>
         </button>
         <button class="card" data-go="sessions">
-          <span class="card-ico">▤</span><span class="card-t">Sesiones</span>
-          <span class="card-s">${sessions.length} guardadas${pending ? ` · <b>${pending} sin exportar</b>` : ''}</span>
+          <span class="card-ico">▤</span><span class="card-t">Sessions</span>
+          <span class="card-s">${sessions.length} saved${pending ? ` · <b>${pending} not exported</b>` : ''}</span>
         </button>
         <button class="card" data-go="protocols">
-          <span class="card-ico">☰</span><span class="card-t">Protocolos</span>
-          <span class="card-s">${protocols.length} disponibles · importar</span>
+          <span class="card-ico">☰</span><span class="card-t">Protocols</span>
+          <span class="card-s">${protocols.length} available · import</span>
         </button>
         <button class="card" data-go="mic">
-          <span class="card-ico">◉</span><span class="card-t">Micrófono</span>
-          <span class="card-s">Comprobar ajustes y nivel</span>
+          <span class="card-ico">◉</span><span class="card-t">Microphone</span>
+          <span class="card-s">Check settings and level</span>
+        </button>
+        <button class="card wide" data-go="guide">
+          <span class="card-ico">ⓘ</span><span class="card-t">Guide</span>
+          <span class="card-s">Getting started · writing protocols · accepted file types · data safety · troubleshooting</span>
         </button>
       </div>
       <footer class="foot">${esc(storage)} · v${APP_VERSION}</footer>
     </div>`, 'scroll');
-  $$('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
+  $$('[data-go]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); go(b.dataset.go, b.dataset.anchor); }));
 }
 
 function go(where, arg) {
@@ -207,13 +259,28 @@ function go(where, arg) {
   if (where === 'sessions') return screenSessions();
   if (where === 'protocols') return screenProtocols();
   if (where === 'mic') return screenMic();
+  if (where === 'guide') return screenGuide(arg);
 }
 
 const backBar = (title, right = '') => `
-  <header class="topbar"><button class="btn ghost back" data-back>‹ Inicio</button><h2>${esc(title)}</h2><div class="tb-right">${right}</div></header>`;
+  <header class="topbar"><button class="btn ghost back" data-back>‹ Home</button><h2>${esc(title)}</h2><div class="tb-right">${right}</div></header>`;
 function bindBack() { $$('[data-back]').forEach((b) => b.addEventListener('click', () => { if (!run) engine.close(); go('home'); })); }
 
-// ---------- medidor ----------
+// ---------- GUIDE ----------
+async function screenGuide(anchor) {
+  if (!settings.seenGuide) { settings.seenGuide = true; saveSettings(settings); }
+  setScreen(`<div class="page guide-page">${backBar('Guide')}
+    ${guideHTML({ version: APP_VERSION, storageLine: esc(await storageLine()), standalone: isStandalone() })}</div>`, 'scroll');
+  bindBack();
+  $$('.toc a').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const d = $(a.getAttribute('href'));
+    if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }));
+  if (anchor) { const d = document.getElementById(anchor); if (d) { d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 50); } }
+}
+
+// ---------- level meter ----------
 let meterRaf = null, meterPeak = 0, clipUntil = 0;
 engine.onLevel((peak, clipped) => {
   meterPeak = Math.max(meterPeak, peak);
@@ -224,14 +291,13 @@ function startMeterLoop() {
   const tick = () => {
     const fill = $('.meter .fill');
     if (fill) {
-      const db = meterPeak > 0 ? 20 * Math.log10(meterPeak) : -90;
-      const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+      const dbfs = meterPeak > 0 ? 20 * Math.log10(meterPeak) : -90;
+      const pct = Math.max(0, Math.min(100, ((dbfs + 60) / 60) * 100));
       fill.style.width = pct + '%';
-      fill.classList.toggle('hot', db > -6);
-      const m = $('.meter');
-      m.classList.toggle('clipping', performance.now() < clipUntil);
+      fill.classList.toggle('hot', dbfs > -6);
+      $('.meter').classList.toggle('clipping', performance.now() < clipUntil);
       const lbl = $('.meter-db');
-      if (lbl) lbl.textContent = db > -90 ? `${db.toFixed(0)} dBFS` : '—';
+      if (lbl) lbl.textContent = dbfs > -90 ? `${dbfs.toFixed(0)} dBFS` : '—';
     }
     meterPeak *= 0.85;
     updateClock();
@@ -241,50 +307,50 @@ function startMeterLoop() {
 }
 function stopMeterLoop() { if (meterRaf) cancelAnimationFrame(meterRaf); meterRaf = null; }
 
-// ---------- MICRÓFONO ----------
+// ---------- MICROPHONE ----------
 async function screenMic() {
-  setScreen(`<div class="page">${backBar('Micrófono')}
+  setScreen(`<div class="page">${backBar('Microphone')}
     <section class="panel">
       <div class="meter big"><div class="fill"></div></div>
-      <div class="row between"><span class="meter-db muted">—</span><span class="muted small">El indicador se pone rojo si hay saturación</span></div>
+      <div class="row between"><span class="meter-db muted">—</span><span class="muted small">The meter turns red when the signal clips</span></div>
       <div class="row gap">
-        <button class="btn primary" id="mic-open">Activar micrófono</button>
+        <button class="btn primary" id="mic-open">Turn on microphone</button>
         <select id="mic-dev" class="hidden"></select>
-        <button class="btn" id="mic-test" disabled>Grabar 5 s de prueba</button>
+        <button class="btn" id="mic-test" disabled>Record 5 s test</button>
       </div>
       <audio id="mic-play" controls class="hidden"></audio>
     </section>
-    <section class="panel"><h3>Ajustes que ha aceptado el dispositivo</h3><div id="mic-info" class="muted">Activa el micrófono para verlos.</div></section>
-    <section class="panel"><h3>Qué mirar</h3><ul class="tips">
-      <li><b>Frecuencia del contexto</b>: es la frecuencia real de captura. Elegir otra al grabar implica remuestrear.</li>
-      <li><b>Cancelación de eco, supresión de ruido y control de ganancia</b> deberían aparecer como «no». Si alguno aparece como «sí» o «desconocido», iOS podría estar procesando la voz.</li>
-      <li>Si conectas un micrófono externo después de activar el micrófono, toca «Activar micrófono» otra vez.</li>
+    <section class="panel"><h3>Settings accepted by the device</h3><div id="mic-info" class="muted">Turn on the microphone to see them.</div></section>
+    <section class="panel"><h3>What to look for</h3><ul class="tips">
+      <li><b>Context sample rate</b> is the real capture rate. Choosing a different rate when recording means resampling.</li>
+      <li><b>Echo cancellation, noise suppression and automatic gain control</b> should read “no”. If any reads “yes” or “unknown”, iPadOS may be processing the voice.</li>
+      <li>If you plug in an external microphone after turning the microphone on, tap “Turn on microphone” again.</li>
     </ul></section></div>`, 'scroll');
   bindBack();
   startMeterLoop();
   const showInfo = async () => {
     const i = engine.info();
-    const yn = (v) => (v === true ? '<b class="bad">sí</b>' : v === false ? '<span class="good">no</span>' : '<span class="muted">desconocido</span>');
+    const yn = (v) => (v === true ? '<b class="bad">yes</b>' : v === false ? '<span class="good">no</span>' : '<span class="muted">unknown</span>');
     $('#mic-info').innerHTML = `<table class="kv">
-      <tr><th>Entrada</th><td>${esc(i.inputLabel || '—')}</td></tr>
-      <tr><th>Frecuencia del contexto</th><td><b>${i.contextSampleRate} Hz</b></td></tr>
-      <tr><th>Frecuencia de la pista</th><td>${i.obtained.sampleRate ? i.obtained.sampleRate + ' Hz' : '<span class="muted">no informada</span>'}</td></tr>
-      <tr><th>Canales</th><td>${i.obtained.channelCount ?? '<span class="muted">no informado</span>'}</td></tr>
-      <tr><th>Cancelación de eco</th><td>${yn(i.obtained.echoCancellation)}</td></tr>
-      <tr><th>Supresión de ruido</th><td>${yn(i.obtained.noiseSuppression)}</td></tr>
-      <tr><th>Control automático de ganancia</th><td>${yn(i.obtained.autoGainControl)}</td></tr>
-      <tr><th>Latencia base</th><td>${i.baseLatency != null ? (i.baseLatency * 1000).toFixed(1) + ' ms' : '—'}</td></tr>
+      <tr><th>Input</th><td>${esc(i.inputLabel || '—')}</td></tr>
+      <tr><th>Context sample rate</th><td><b>${i.contextSampleRate} Hz</b></td></tr>
+      <tr><th>Track sample rate</th><td>${i.obtained.sampleRate ? i.obtained.sampleRate + ' Hz' : '<span class="muted">not reported</span>'}</td></tr>
+      <tr><th>Channels</th><td>${i.obtained.channelCount ?? '<span class="muted">not reported</span>'}</td></tr>
+      <tr><th>Echo cancellation</th><td>${yn(i.obtained.echoCancellation)}</td></tr>
+      <tr><th>Noise suppression</th><td>${yn(i.obtained.noiseSuppression)}</td></tr>
+      <tr><th>Automatic gain control</th><td>${yn(i.obtained.autoGainControl)}</td></tr>
+      <tr><th>Base latency</th><td>${i.baseLatency != null ? (i.baseLatency * 1000).toFixed(1) + ' ms' : '—'}</td></tr>
     </table>`;
     const devs = await engine.listInputs();
     const sel = $('#mic-dev');
     if (devs.length > 1) {
       sel.classList.remove('hidden');
-      sel.innerHTML = devs.map((d, k) => `<option value="${esc(d.deviceId)}" ${engine.deviceId === d.deviceId ? 'selected' : ''}>${esc(d.label || 'Entrada ' + (k + 1))}</option>`).join('');
+      sel.innerHTML = devs.map((d, k) => `<option value="${esc(d.deviceId)}" ${engine.deviceId === d.deviceId ? 'selected' : ''}>${esc(d.label || 'Input ' + (k + 1))}</option>`).join('');
     }
   };
   $('#mic-open').addEventListener('click', async () => {
     try { await engine.open(); await engine.ensureRunning(); $('#mic-test').disabled = false; await showInfo(); }
-    catch (e) { toast('No se pudo abrir el micrófono: ' + e.message, 'err'); }
+    catch (e) { toast('Couldn’t open the microphone: ' + e.message, 'err'); }
   });
   $('#mic-dev').addEventListener('change', async (e) => {
     try { await engine.useDevice(e.target.value); await showInfo(); } catch (err) { toast(err.message, 'err'); }
@@ -294,26 +360,26 @@ async function screenMic() {
     try {
       await engine.ensureRunning();
       engine.start(0);
-      for (let s = 5; s > 0; s--) { b.textContent = `Grabando… ${s}`; await new Promise((r) => setTimeout(r, 1000)); }
+      for (let s = 5; s > 0; s--) { b.textContent = `Recording… ${s}`; await new Promise((r) => setTimeout(r, 1000)); }
       const res = await engine.stop(0);
       const enc = await engine.encode(res.samples, res.sampleRate, res.sampleRate, 16);
       const a = $('#mic-play');
       if (a.src) URL.revokeObjectURL(a.src);
       a.src = URL.createObjectURL(new Blob([enc.full], { type: 'audio/wav' }));
       a.classList.remove('hidden');
-      toast(res.clipped ? 'Prueba grabada (con saturación)' : 'Prueba grabada', res.clipped ? 'err' : '');
+      toast(res.clipped ? 'Test recorded (with clipping)' : 'Test recorded', res.clipped ? 'err' : '');
     } catch (err) { toast(err.message, 'err'); }
-    b.textContent = 'Grabar 5 s de prueba'; b.disabled = false;
+    b.textContent = 'Record 5 s test'; b.disabled = false;
   });
   if (engine.ctx) { $('#mic-test').disabled = false; showInfo(); }
 }
 
-// ---------- PROTOCOLOS ----------
+// ---------- PROTOCOLS ----------
 const IMPORT_ACCEPT = '.zip,application/zip,.md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*';
 const canPickFolder = () => matchMedia('(pointer: fine)').matches && 'webkitdirectory' in document.createElement('input');
 const isJunk = (p) => /(^|\/)(__MACOSX|\.git)(\/|$)/.test(p) || /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(p) || /(^|\/)\._/.test(p);
 
-// Archivos sueltos, una carpeta (escritorio) o ZIP → [{ path, type, data: ArrayBuffer }]
+// Loose files, a folder (desktop) or a ZIP → [{ path, type, data: ArrayBuffer }]
 async function collectFiles(fileList) {
   let out = [];
   for (const f of fileList) {
@@ -324,7 +390,7 @@ async function collectFiles(fileList) {
     }
   }
   out = out.filter((f) => f.path && !isJunk(f.path));
-  // Si todo está dentro de una misma carpeta (p. ej. el ZIP de «ejemplo/»), se quita ese prefijo
+  // If everything sits inside one folder (e.g. the ZIP of "example-es/"), strip that prefix
   while (out.length && out.every((f) => f.path.includes('/')) && new Set(out.map((f) => f.path.split('/')[0])).size === 1) {
     out.forEach((f) => { f.path = f.path.slice(f.path.indexOf('/') + 1); });
   }
@@ -343,11 +409,11 @@ async function chooseMain(files) {
 
 async function importFiles(fileList, existing = null) {
   const files = await collectFiles(fileList);
-  if (!files.length) throw new Error('No se ha seleccionado ningún archivo válido');
+  if (!files.length) throw new Error('No valid files were selected');
   let rec = existing;
   if (!rec) {
     const main = await chooseMain(files);
-    if (!main) throw new Error('No hay ningún archivo de protocolo (.md o .csv)');
+    if (!main) throw new Error('There is no protocol file (.md or .csv)');
     rec = { id: 'imp:' + uuid(), title: '', mainName: main.path, files: {}, importedAt: new Date().toISOString() };
   }
   for (const f of files) rec.files[f.path] = { type: f.type, data: f.data };
@@ -359,9 +425,9 @@ async function importFiles(fileList, existing = null) {
   return { rec, proto };
 }
 
-function importButtons(id, label) {
+function importButtons(id, label, folderLabel) {
   return `<label class="btn primary">${esc(label)}<input type="file" id="${id}" multiple accept="${IMPORT_ACCEPT}" hidden></label>
-    ${canPickFolder() ? `<label class="btn">${label.startsWith('Añadir') ? 'Añadir carpeta' : 'Importar carpeta'}<input type="file" id="${id}-dir" webkitdirectory hidden></label>` : ''}`;
+    ${canPickFolder() ? `<label class="btn">${esc(folderLabel)}<input type="file" id="${id}-dir" webkitdirectory hidden></label>` : ''}`;
 }
 function bindImport(id, handler) {
   for (const sel of [`#${id}`, `#${id}-dir`]) {
@@ -373,35 +439,37 @@ function bindImport(id, handler) {
     });
   }
 }
+const importedToast = (proto) => toast(proto.missing.length ? `Imported, but ${plural(proto.missing.length, 'file is', 'files are')} missing` : `Imported: ${proto.title}`, proto.missing.length ? 'err' : '');
 
 async function screenProtocols(showId) {
   const list = await listProtocols();
-  setScreen(`<div class="page">${backBar('Protocolos')}
+  setScreen(`<div class="page">${backBar('Protocols')}
     <section class="panel">
-      <h3>Importar un protocolo</h3>
-      <p class="muted">La forma más sencilla es un <b>.zip con la carpeta del protocolo</b> (en la app Archivos: mantén pulsada la carpeta → <b>Comprimir</b>). También puedes seleccionar a la vez el archivo <b>.md</b> o <b>.csv</b> y los archivos que usa; si falta alguno, podrás añadirlo después.</p>
-      <div class="row gap wrap">${importButtons('imp', 'Importar archivos o .zip')}</div>
+      <h3>Import a protocol</h3>
+      <p class="muted">The easiest way is a <b>.zip of the protocol folder</b> (in the Files app: long-press the folder → <b>Compress</b>). You can also select the <b>.md</b> or <b>.csv</b> file together with the files it uses; if anything is missing, you can add it afterwards. See the <a href="#" data-go="guide" data-anchor="g-protocols">Guide</a> for the format.</p>
+      <div class="row gap wrap">${importButtons('imp', 'Import files or .zip', 'Import folder')}</div>
     </section>
     <div class="list">${list.map((p) => `
       <div class="item">
         <div class="item-main"><div class="item-t">${esc(p.title)}</div>
-          <div class="item-s">${p.kind === 'builtin' ? 'Incluido en la web' : `Importado · ${Object.keys(p.record.files).length} archivos · ${fmtDate(p.record.updatedAt || p.record.importedAt)}`}</div></div>
+          <div class="item-s">${p.kind === 'builtin' ? 'Included with the app' : `Imported · ${plural(Object.keys(p.record.files).length, 'file', 'files')} · ${fmtDate(p.record.updatedAt || p.record.importedAt)}`}</div></div>
         <div class="item-actions">
-          <button class="btn" data-preview="${esc(p.id)}">Ver</button>
-          ${p.kind === 'imported' ? `<button class="btn ghost danger-t" data-del="${esc(p.id)}">Borrar</button>` : ''}
+          <button class="btn" data-preview="${esc(p.id)}">View</button>
+          ${p.kind === 'imported' ? `<button class="btn ghost danger-t" data-del="${esc(p.id)}">Delete</button>` : ''}
         </div>
-      </div>`).join('') || '<p class="muted">No hay protocolos.</p>'}</div>
+      </div>`).join('') || '<p class="muted">No protocols.</p>'}</div>
     <div id="preview"></div></div>`, 'scroll');
   bindBack();
+  $$('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); go(a.dataset.go, a.dataset.anchor); }));
   bindImport('imp', async (files) => {
     try {
       const { rec, proto } = await importFiles(files);
-      toast(proto.missing.length ? `Importado, pero faltan ${proto.missing.length} archivos` : `Importado: ${proto.title}`, proto.missing.length ? 'err' : '');
+      importedToast(proto);
       await screenProtocols(rec.id);
-    } catch (err) { toast('Error al importar: ' + err.message, 'err'); }
+    } catch (err) { toast('Import failed: ' + err.message, 'err'); }
   });
   $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-    if (!(await modal({ title: 'Borrar protocolo', body: 'Las sesiones ya grabadas con él no se borran.', ok: 'Borrar', danger: true }))) return;
+    if (!(await modal({ title: 'Delete protocol', body: 'Sessions already recorded with it are not deleted.', ok: 'Delete', danger: true }))) return;
     await db.del('protocols', b.dataset.del);
     await db.audit('protocol_deleted', { protocolId: b.dataset.del });
     screenProtocols();
@@ -416,9 +484,9 @@ function guessType(n) {
     md: 'text/markdown', markdown: 'text/markdown', csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain' }[ext] || 'application/octet-stream';
 }
 
-// ZIP del protocolo (plantilla para editar y volver a importar)
+// ZIP of a protocol (a template to edit and import again)
 async function protocolZip(entry, proto) {
-  const folder = slugify(proto.title, 40) || 'protocolo';
+  const folder = slugify(proto.title, 40) || 'protocol';
   const entries = [];
   if (entry.kind === 'imported') {
     for (const [n, v] of Object.entries(entry.record.files)) entries.push({ name: `${folder}/${n}`, data: toBlob(v) });
@@ -431,30 +499,31 @@ async function protocolZip(entry, proto) {
   return new File([await makeZip(entries)], `${folder}.zip`, { type: 'application/zip' });
 }
 
+const orderLabel = (t) => (t.randomize === 'full' ? 'fully random' : t.randomize ? 'random within blocks' : 'fixed');
+
 async function showPreview(entry) {
   const box = $('#preview');
   try {
     const p = await loadProtocolEntry(entry);
-    const otherWarnings = p.warnings.filter((w) => !w.startsWith('Falta'));
+    const otherWarnings = p.warnings.filter((w) => !w.startsWith('Missing'));
     box.innerHTML = `<section class="panel">
       <h3>${esc(p.title)}</h3>
       ${p.missing.length ? `<div class="notice warn">
-        <b>Faltan ${p.missing.length} ${p.missing.length === 1 ? 'archivo' : 'archivos'} que usa el protocolo:</b>
+        <b>${plural(p.missing.length, 'file used by the protocol is', 'files used by the protocol are')} missing:</b>
         <div class="missing">${p.missing.map((m) => `<code>${esc(m)}</code>`).join(' ')}</div>
-        ${entry.kind === 'imported' ? `<div class="row gap wrap">${importButtons('add', 'Añadir archivos o .zip')}</div>
-        <small>Se emparejan por nombre: no hace falta respetar las carpetas.</small>` : ''}
+        ${entry.kind === 'imported' ? `<div class="row gap wrap">${importButtons('add', 'Add files or .zip', 'Add folder')}</div>
+        <small>Files are matched by name, so folders don’t matter.</small>` : ''}
       </div>` : ''}
       ${otherWarnings.map((w) => `<div class="notice warn">${esc(w)}</div>`).join('')}
-      <table class="kv tasks"><tr><th>Tarea</th><th>Grabación</th><th>Slides</th><th>Orden</th></tr>
+      <table class="kv tasks"><tr><th>Task</th><th>Recording</th><th>Slides</th><th>Order</th></tr>
       ${p.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>${RECORDING_MODES[t.recording]}</td>
-        <td>${t.slides.length}${t.repetitions > 1 ? ` × ${t.repetitions}` : ''}</td>
-        <td>${t.randomize === 'full' ? 'aleatorio total' : t.randomize ? 'aleatorio por bloques' : 'fijo'}</td></tr>`).join('')}
+        <td>${t.slides.length}${t.repetitions > 1 ? ` × ${t.repetitions}` : ''}</td><td>${orderLabel(t)}</td></tr>`).join('')}
       </table>
       <div class="thumbs">${p.tasks.flatMap((t) => t.slides.slice(0, 4).map((s) =>
         `<div class="thumb"><div class="thumb-in">${renderMarkdown(s.md, p.resolve)}</div><span>${esc(t.name)} · ${esc(s.id)}</span></div>`)).join('')}</div>
       <div class="row gap wrap">
-        <button class="btn primary" id="pv-start" ${p.tasks.length ? '' : 'disabled'}>Nueva sesión con este protocolo</button>
-        <button class="btn" id="pv-zip">Descargar .zip</button>
+        <button class="btn primary" id="pv-start" ${p.tasks.length ? '' : 'disabled'}>New session with this protocol</button>
+        <button class="btn" id="pv-zip">Download .zip</button>
       </div>
     </section>`;
     $('#pv-start').addEventListener('click', () => go('setup', entry.id));
@@ -467,54 +536,77 @@ async function showPreview(entry) {
     bindImport('add', async (files) => {
       try {
         const { rec, proto } = await importFiles(files, entry.record);
-        toast(proto.missing.length ? `Siguen faltando ${proto.missing.length} archivos` : 'Protocolo completo', proto.missing.length ? 'err' : '');
+        toast(proto.missing.length ? `Still missing ${plural(proto.missing.length, 'file', 'files')}` : 'Protocol complete', proto.missing.length ? 'err' : '');
         await screenProtocols(rec.id);
-      } catch (err) { toast('Error al añadir: ' + err.message, 'err'); }
+      } catch (err) { toast('Couldn’t add files: ' + err.message, 'err'); }
     });
     box.scrollIntoView({ behavior: 'smooth' });
-  } catch (err) { box.innerHTML = `<div class="notice warn">No se pudo leer el protocolo: ${esc(err.message)}</div>`; }
+  } catch (err) {
+    if (err instanceof UnreadableProtocol) {
+      box.innerHTML = `<section class="panel"><div class="notice warn"><b>This protocol can’t be opened.</b> ${esc(err.message)}
+        It was probably imported with an earlier version of Fieldrec, which stored files in a way Safari can lose when the page reloads.
+        Delete it and import it again (preferably as a .zip).</div>
+        <div class="row gap wrap"><button class="btn danger" id="pv-del">Delete this protocol</button>${importButtons('reimp', 'Import again', 'Import folder')}</div></section>`;
+      $('#pv-del').addEventListener('click', async () => {
+        await db.del('protocols', entry.id);
+        await db.audit('protocol_deleted', { protocolId: entry.id, protocol: entry.title, reason: 'unreadable' });
+        screenProtocols();
+      });
+      bindImport('reimp', async (files) => {
+        try {
+          const { rec, proto } = await importFiles(files);
+          await db.del('protocols', entry.id);
+          importedToast(proto);
+          await screenProtocols(rec.id);
+        } catch (e) { toast('Import failed: ' + e.message, 'err'); }
+      });
+    } else {
+      box.innerHTML = `<div class="notice warn">Couldn’t read the protocol: ${esc(err.message)}</div>`;
+    }
+    box.scrollIntoView({ behavior: 'smooth' });
+  }
 }
 
-// ---------- NUEVA SESIÓN ----------
+// ---------- NEW SESSION ----------
 async function screenSetup(preselect) {
   const list = await listProtocols();
   const rateOpt = (v, l) => `<option value="${v}" ${String(settings.sampleRate) === String(v) ? 'selected' : ''}>${l}</option>`;
-  setScreen(`<div class="page">${backBar('Nueva sesión')}
+  setScreen(`<div class="page">${backBar('New session')}
     <form id="setup" class="form" autocomplete="off">
       <section class="panel">
-        <h3>Sesión</h3>
-        <label class="field"><span>Protocolo</span><select name="protocol" required>
+        <h3>Session</h3>
+        <label class="field"><span>Protocol</span><select name="protocol" required>
           ${list.map((p) => `<option value="${esc(p.id)}" ${p.id === preselect ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
         <div class="cols">
-          <label class="field"><span>Código de participante</span><input name="participant" required pattern="[A-Za-z0-9_\\-]{1,24}" placeholder="P01" autocapitalize="characters" spellcheck="false"><small>Solo letras, números, - y _. Nunca el nombre.</small></label>
-          <label class="field"><span>Sesión</span><input name="session" value="s1" pattern="[A-Za-z0-9_\\-]{1,16}" spellcheck="false"></label>
+          <label class="field"><span>Participant code</span><input name="participant" required pattern="[A-Za-z0-9_\\-]{1,24}" placeholder="P01" autocapitalize="characters" spellcheck="false"><small>Letters, numbers, - and _ only. Never a name.</small></label>
+          <label class="field"><span>Session</span><input name="session" value="s1" pattern="[A-Za-z0-9_\\-]{1,16}" spellcheck="false"></label>
         </div>
         <div class="cols">
-          <label class="field"><span>Investigador/a</span><input name="researcher" value="${esc(settings.researcher)}"></label>
-          <label class="field"><span>Lugar</span><input name="location" value="${esc(settings.location)}"></label>
+          <label class="field"><span>Researcher</span><input name="researcher" value="${esc(settings.researcher)}"></label>
+          <label class="field"><span>Location</span><input name="location" value="${esc(settings.location)}"></label>
         </div>
-        <label class="field"><span>Notas</span><textarea name="notes" rows="2"></textarea></label>
+        <label class="field"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
         <div id="task-pick"></div>
       </section>
       <section class="panel">
         <h3>Audio</h3>
         <div class="cols">
-          <label class="field"><span>Frecuencia de muestreo</span><select name="sampleRate">
-            ${rateOpt('native', 'Nativa del dispositivo')}${rateOpt(48000, '48 000 Hz')}${rateOpt(44100, '44 100 Hz')}${rateOpt(22050, '22 050 Hz')}${rateOpt(16000, '16 000 Hz')}
+          <label class="field"><span>Sample rate</span><select name="sampleRate">
+            ${rateOpt('native', 'Device native')}${rateOpt(48000, '48,000 Hz')}${rateOpt(44100, '44,100 Hz')}${rateOpt(22050, '22,050 Hz')}${rateOpt(16000, '16,000 Hz')}
           </select><small id="rate-note"></small></label>
-          <label class="field"><span>Profundidad</span><select name="bitDepth">
-            ${[16, 24, 32].map((b) => `<option value="${b}" ${Number(settings.bitDepth) === b ? 'selected' : ''}>${b === 32 ? '32 bits float' : b + ' bits'}</option>`).join('')}
+          <label class="field"><span>Bit depth</span><select name="bitDepth">
+            ${[16, 24, 32].map((b) => `<option value="${b}" ${Number(settings.bitDepth) === b ? 'selected' : ''}>${b === 32 ? '32-bit float' : b + '-bit'}</option>`).join('')}
           </select></label>
         </div>
         <div class="cols">
-          <label class="field"><span>Margen previo (pre-roll)</span><select name="prerollMs">
+          <label class="field"><span>Pre-roll</span><select name="prerollMs">
             ${[0, 250, 500].map((v) => `<option value="${v}" ${Number(settings.prerollMs) === v ? 'selected' : ''}>${v} ms</option>`).join('')}</select></label>
-          <label class="field"><span>Margen posterior</span><select name="postrollMs">
+          <label class="field"><span>Post-roll</span><select name="postrollMs">
             ${[0, 250, 500].map((v) => `<option value="${v}" ${Number(settings.postrollMs) === v ? 'selected' : ''}>${v} ms</option>`).join('')}</select></label>
         </div>
-        <label class="check"><input type="checkbox" name="autoAdvance" ${settings.autoAdvance ? 'checked' : ''}> <span>En tareas por token, pasar a la siguiente slide al parar la grabación</span></label>
+        <label class="check"><input type="checkbox" name="autoAdvance" ${settings.autoAdvance ? 'checked' : ''}> <span>In per-token tasks, go to the next slide when a recording is stopped</span></label>
       </section>
-      <div class="actions"><button class="btn primary big" type="submit">Continuar al consentimiento</button></div>
+      <div class="actions"><button class="btn primary big" type="submit">Continue to consent</button></div>
     </form></div>`, 'scroll');
   bindBack();
   const form = $('#setup');
@@ -524,27 +616,27 @@ async function screenSetup(preselect) {
     if (!entry) return;
     try {
       proto = await loadProtocolEntry(entry);
-      $('#task-pick').innerHTML = `<div class="field"><span>Tareas</span><div class="chips">
+      $('#task-pick').innerHTML = `<div class="field"><span>Tasks</span><div class="chips">
         ${proto.tasks.map((t, i) => `<label class="chip"><input type="checkbox" name="task" value="${i}" checked><span>${esc(t.title)} <em>${RECORDING_MODES[t.recording]}</em></span></label>`).join('')}
         </div></div>${proto.warnings.map((w) => `<div class="notice warn">${esc(w)}</div>`).join('')}`;
-    } catch (err) { proto = null; $('#task-pick').innerHTML = `<div class="notice warn">No se pudo leer el protocolo: ${esc(err.message)}</div>`; }
+    } catch (err) { proto = null; $('#task-pick').innerHTML = `<div class="notice warn">Couldn’t read the protocol: ${esc(err.message)}</div>`; }
   };
   form.protocol.addEventListener('change', pick);
   await pick();
   const rateNote = () => {
     const v = form.sampleRate.value;
     const n = engine.sampleRate;
-    $('#rate-note').textContent = v === 'native' ? (n ? `Se grabará a ${n} Hz` : 'Normalmente 48 000 Hz en iPad')
-      : n && Number(v) > n ? `Por encima de la captura real (${n} Hz): no añade información` : n && Number(v) !== n ? `Se remuestreará desde ${n} Hz` : '';
+    $('#rate-note').textContent = v === 'native' ? (n ? `Will record at ${n} Hz` : 'Usually 48,000 Hz on iPad')
+      : n && Number(v) > n ? `Above the real capture rate (${n} Hz): adds no information` : n && Number(v) !== n ? `Will be resampled from ${n} Hz` : '';
   };
   form.sampleRate.addEventListener('change', rateNote); rateNote();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!proto || !proto.tasks.length) return toast('El protocolo no tiene tareas', 'err');
+    if (!proto || !proto.tasks.length) return toast('The protocol has no tasks', 'err');
     const fd = new FormData(form);
     const chosen = fd.getAll('task').map(Number);
-    if (!chosen.length) return toast('Elige al menos una tarea', 'err');
+    if (!chosen.length) return toast('Choose at least one task', 'err');
     settings = {
       ...settings,
       sampleRate: fd.get('sampleRate') === 'native' ? 'native' : Number(fd.get('sampleRate')),
@@ -555,7 +647,7 @@ async function screenSetup(preselect) {
     try {
       await engine.open();
       await engine.ensureRunning();
-    } catch (err) { return toast('No se pudo abrir el micrófono: ' + err.message, 'err'); }
+    } catch (err) { return toast('Couldn’t open the microphone: ' + err.message, 'err'); }
     try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (_) {}
     const participant = safeName(fd.get('participant'));
     const sessionLabel = safeName(fd.get('session')) || 's1';
@@ -568,34 +660,35 @@ async function screenSetup(preselect) {
       folderName: `${participant}_${sessionLabel}_${localDate(now)}`,
       researcher: fd.get('researcher'), location: fd.get('location'), notes: fd.get('notes'),
       createdAt: now.toISOString(), status: 'consent',
-      protocol: { title: proto.title, id: proto.entry.id, mainName: Object.keys(proto.texts)[0] },
+      protocol: { title: proto.title, id: proto.entry.id, mainName: Object.keys(proto.texts)[0], language: proto.meta.language || 'en' },
       protocolTexts: proto.texts,
       tasks: chosen.map((i) => ({ name: proto.tasks[i].name, title: proto.tasks[i].title, recording: proto.tasks[i].recording, randomize: proto.tasks[i].randomize, repetitions: proto.tasks[i].repetitions })),
       seed,
       audio: { requestedSampleRate: settings.sampleRate, bitDepth: settings.bitDepth, prerollMs: settings.prerollMs, postrollMs: settings.postrollMs, device: engine.info() },
-      device: { userAgent: navigator.userAgent, screen: `${screen.width}x${screen.height}`, pixelRatio: devicePixelRatio, language: navigator.language },
+      device: { userAgent: navigator.userAgent, screen: `${screen.width}x${screen.height}`, pixelRatio: devicePixelRatio, language: navigator.language, standalone: isStandalone() },
       consent: null, trials: [], events: [], persisted: false,
     };
     screenConsent(proto, session, chosen);
   });
 }
 
-// ---------- CONSENTIMIENTO ----------
+// ---------- CONSENT ----------
 async function persistSession(session) { session.persisted = true; await db.put('sessions', session); }
 
 function screenConsent(proto, session, chosen) {
+  const pt = ptext(proto);
   const text = proto.consent ? renderMarkdown(proto.consent, proto.resolve) :
-    '<p class="muted">Este protocolo no incluye texto de consentimiento. Añade <code>consent: archivo.md</code> en la cabecera del protocolo.</p>';
+    '<p class="muted">This protocol has no consent text. Add <code>consent: file.md</code> to the protocol header.</p>';
   setScreen(`<div class="page consent">
-    <header class="topbar"><button class="btn ghost back" id="c-cancel">‹ Cancelar</button><h2>Consentimiento</h2><div class="tb-right muted">${esc(session.participant)}</div></header>
+    <header class="topbar"><button class="btn ghost back" id="c-cancel">‹ Cancel</button><h2>Consent</h2><div class="tb-right muted">${esc(session.participant)}</div></header>
     <section class="panel prose">${text}</section>
     <section class="panel">
-      <label class="check big"><input type="checkbox" id="c1"> <span>Acepto participar en este estudio.</span></label>
-      <label class="check big"><input type="checkbox" id="c2"> <span>Acepto que se grabe mi voz.</span></label>
-      <label class="check big"><input type="checkbox" id="c3"> <span>Acepto que la grabación se archive para investigaciones futuras (opcional).</span></label>
-      <div class="row gap"><button class="btn" id="c-rec">● Grabar consentimiento verbal</button><span id="c-rec-st" class="muted small"></span></div>
+      <label class="check big"><input type="checkbox" id="c1"> <span>${esc(pt.c1)}</span></label>
+      <label class="check big"><input type="checkbox" id="c2"> <span>${esc(pt.c2)}</span></label>
+      <label class="check big"><input type="checkbox" id="c3"> <span>${esc(pt.c3)}</span></label>
+      <div class="row gap"><button class="btn" id="c-rec">● Record verbal consent</button><span id="c-rec-st" class="muted small"></span></div>
     </section>
-    <div class="actions"><button class="btn primary big" id="c-go" disabled>Empezar la sesión</button></div></div>`, 'scroll');
+    <div class="actions"><button class="btn primary big" id="c-go" disabled>Start the session</button></div></div>`, 'scroll');
   const upd = () => { $('#c-go').disabled = !($('#c1').checked && $('#c2').checked); };
   $('#c1').addEventListener('change', upd); $('#c2').addEventListener('change', upd);
   let verbalFile = null, recording = false;
@@ -604,17 +697,17 @@ function screenConsent(proto, session, chosen) {
     if (!recording) {
       await engine.ensureRunning();
       engine.start(settings.prerollMs);
-      recording = true; b.textContent = '■ Parar'; b.classList.add('rec');
-      $('#c-rec-st').textContent = 'Grabando…';
+      recording = true; b.textContent = '■ Stop'; b.classList.add('rec');
+      $('#c-rec-st').textContent = 'Recording…';
     } else {
       recording = false; b.disabled = true;
       const res = await engine.stop(settings.postrollMs);
       const secs = res.samples.length / res.sampleRate;
       if (!session.persisted) await persistSession(session);
-      verbalFile = `${session.participant}_${session.session}_consentimiento_verbal.wav`;
-      await saveWav(session, res, verbalFile, { task: '_consentimiento', kind: 'consent' });
-      b.textContent = '● Volver a grabar'; b.classList.remove('rec'); b.disabled = false;
-      $('#c-rec-st').textContent = `Guardado (${secs.toFixed(1)} s)`;
+      verbalFile = `${session.participant}_${session.session}_verbal_consent.wav`;
+      await saveWav(session, res, verbalFile, { task: '_consent', kind: 'consent' });
+      b.textContent = '● Record again'; b.classList.remove('rec'); b.disabled = false;
+      $('#c-rec-st').textContent = `Saved (${secs.toFixed(1)} s)`;
     }
   });
   $('#c-cancel').addEventListener('click', async () => {
@@ -627,7 +720,7 @@ function screenConsent(proto, session, chosen) {
     go('home');
   });
   $('#c-go').addEventListener('click', async () => {
-    if (recording) return toast('Para primero la grabación del consentimiento', 'err');
+    if (recording) return toast('Stop the consent recording first', 'err');
     session.consent = {
       participate: $('#c1').checked, recording: $('#c2').checked, archive: $('#c3').checked,
       verbalRecording: verbalFile, time: new Date().toISOString(), textIncluded: !!proto.consent,
@@ -639,7 +732,7 @@ function screenConsent(proto, session, chosen) {
   });
 }
 
-// ---------- GUARDADO ----------
+// ---------- SAVING ----------
 function outRate(nativeRate) { return settings.sampleRate === 'native' ? nativeRate : Number(settings.sampleRate); }
 
 async function saveWav(session, res, name, meta = {}) {
@@ -669,7 +762,7 @@ async function saveText(session, name, text, task) {
   await db.put('files', { id: uuid(), sessionId: session.id, name, kind: 'text', type: 'text/plain', data, size: data.byteLength, createdAt: new Date().toISOString(), task });
 }
 
-// ---------- EJECUCIÓN DE LA SESIÓN ----------
+// ---------- RUNNING A SESSION ----------
 let wakeLock = null;
 async function requestWake() {
   try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); } } catch (_) { wakeLock = null; }
@@ -693,7 +786,7 @@ function startRun(proto, session, chosen) {
 function renderRunnerShell() {
   setScreen(`<div class="runner">
     <header class="rbar">
-      <button class="icon-btn" id="r-menu" aria-label="Menú">☰</button>
+      <button class="icon-btn" id="r-menu" aria-label="Menu">☰</button>
       <div class="rtitle"><span id="r-task"></span><span id="r-prog" class="muted"></span></div>
       <div class="recind" id="r-ind"><span class="dot"></span><span id="r-time">00:00</span></div>
       <div class="meter"><div class="fill"></div></div>
@@ -701,9 +794,9 @@ function renderRunnerShell() {
     <div class="banner hidden" id="r-banner"></div>
     <section class="stage" id="r-stage"><div class="slide" id="r-slide"><div class="content" id="r-content"></div></div></section>
     <footer class="cbar">
-      <button class="nav" id="r-prev">‹ Anterior</button>
-      <div class="cmid"><div id="r-status" class="rstatus"></div><button class="recbtn" id="r-rec" aria-label="Grabar"><span></span></button></div>
-      <button class="nav next" id="r-next">Siguiente ›</button>
+      <button class="nav" id="r-prev">‹ Previous</button>
+      <div class="cmid"><div id="r-status" class="rstatus"></div><button class="recbtn" id="r-rec" aria-label="Record"><span></span></button></div>
+      <button class="nav next" id="r-next">Next ›</button>
     </footer></div>`, 'run');
   $('#r-menu').addEventListener('click', runnerMenu);
   $('#r-prev').addEventListener('click', () => navigate(-1));
@@ -743,15 +836,16 @@ function showSlide() {
   const content = $('#r-content');
   const slideEl = $('#r-slide');
   slideEl.className = 'slide';
+  const pt = ptext(run.proto);
   if (run.phase === 'intro') {
-    $('#r-prog').textContent = `Tarea ${run.ti + 1} de ${run.tasks.length}`;
-    content.innerHTML = `<div class="intro"><div class="eyebrow">Tarea ${run.ti + 1} de ${run.tasks.length}</div><h1>${esc(t.task.title)}</h1><p>${esc(t.task.instructions)}</p></div>`;
+    $('#r-prog').textContent = `Task ${run.ti + 1} of ${run.tasks.length}`;
+    content.innerHTML = `<div class="intro"><div class="eyebrow">${esc(pt.taskOf(run.ti + 1, run.tasks.length))}</div><h1>${esc(t.task.title)}</h1><p>${esc(t.task.instructions)}</p></div>`;
     slideEl.classList.add('is-intro');
   } else if (run.phase === 'done') {
     const next = run.tasks[run.ti + 1];
     $('#r-prog').textContent = '';
-    content.innerHTML = `<div class="intro"><div class="eyebrow">Tarea completada</div><h1>${next ? 'Pausa' : 'Fin de la sesión'}</h1>
-      <p>${next ? `Siguiente: <b>${esc(next.task.title)}</b>` : '¡Muchas gracias por tu participación!'}</p></div>`;
+    content.innerHTML = `<div class="intro"><div class="eyebrow">${esc(pt.taskDone)}</div><h1>${next ? esc(pt.pause) : esc(pt.end)}</h1>
+      <p>${next ? pt.next(esc(next.task.title)) : esc(pt.thanks)}</p></div>`;
     slideEl.classList.add('is-intro');
   } else {
     const x = t.seq[run.si];
@@ -771,7 +865,7 @@ function showSlide() {
   updateControls();
 }
 
-// Ajusta el tamaño de letra para que la slide quepa sin desplazamiento.
+// Shrinks the font size until the slide fits without scrolling.
 function fitText() {
   const slide = $('#r-slide'), content = $('#r-content');
   if (!slide || !content) return;
@@ -797,17 +891,17 @@ function updateControls() {
   recBtn.classList.toggle('hidden', !(inSlide && mode === 'per_token'));
   recBtn.classList.toggle('on', !!tokenRec);
   recBtn.disabled = run.busy;
-  prev.disabled = run.busy || run.phase !== 'slide' || run.si === 0 || (isCont(t) && run.si === 0);
+  prev.disabled = run.busy || run.phase !== 'slide' || run.si === 0;
   next.disabled = run.busy;
-  next.textContent = run.phase === 'intro' ? 'Empezar ›' : run.phase === 'done' ? (run.tasks[run.ti + 1] ? 'Siguiente tarea ›' : 'Terminar ›')
-    : run.si === t.seq.length - 1 ? 'Terminar tarea ›' : 'Siguiente ›';
+  next.textContent = run.phase === 'intro' ? 'Start ›' : run.phase === 'done' ? (run.tasks[run.ti + 1] ? 'Next task ›' : 'Finish ›')
+    : run.si === t.seq.length - 1 ? 'Finish task ›' : 'Next ›';
   $('#r-ind').classList.toggle('on', !!run.rec);
-  if (run.busy) status.textContent = 'Guardando…';
+  if (run.busy) status.textContent = 'Saving…';
   else if (inSlide && mode === 'per_token') {
-    const k = takeKey(); const n = run.takes[k] || 0;
-    status.innerHTML = tokenRec ? '<b class="rec-t">Grabando</b>' : n ? `<span class="good">✓ Toma ${n} guardada</span>` : 'Toca para grabar';
-  } else if (inSlide && isCont(t)) status.innerHTML = `<b class="rec-t">Grabación continua</b>`;
-  else if (inSlide && mode === 'none') status.textContent = 'Sin grabación';
+    const n = run.takes[takeKey()] || 0;
+    status.innerHTML = tokenRec ? '<b class="rec-t">Recording</b>' : n ? `<span class="good">✓ Take ${n} saved</span>` : 'Tap to record';
+  } else if (inSlide && isCont(t)) status.innerHTML = '<b class="rec-t">Continuous recording</b>';
+  else if (inSlide && mode === 'none') status.textContent = 'Not recording';
   else status.textContent = '';
 }
 
@@ -828,7 +922,7 @@ function fileBase(slideOrder, x) {
 async function toggleTokenRec() {
   if (run.busy || run.phase !== 'slide') return;
   if (!run.rec) {
-    try { await engine.ensureRunning(); } catch (e) { return toast('Micrófono no disponible: ' + e.message, 'err'); }
+    try { await engine.ensureRunning(); } catch (e) { return toast('Microphone unavailable: ' + e.message, 'err'); }
     engine.start(settings.prerollMs);
     run.rec = { kind: 'token', startedAt: Date.now(), shownAt: new Date().toISOString() };
     updateControls();
@@ -856,10 +950,10 @@ async function stopToken() {
       started_at: startedAt, clipped: !!res.clipped, sample_rate: rec.sampleRate, bit_depth: rec.bitDepth,
     });
     await db.put('sessions', run.session);
-    if (res.clipped) toast('Atención: la toma tiene saturación', 'err');
+    if (res.clipped) toast('Warning: this take is clipped', 'err');
   } catch (e) {
     run.rec = null;
-    toast('Error al guardar: ' + e.message, 'err');
+    toast('Couldn’t save: ' + e.message, 'err');
   }
   run.busy = false;
   updateControls();
@@ -895,10 +989,10 @@ async function finishContinuous() {
       started_at: m.shownAt, clipped: !!res.clipped, sample_rate: rec.sampleRate, bit_depth: rec.bitDepth,
     }));
     await db.put('sessions', s);
-    if (res.clipped) toast('Atención: hubo saturación en la grabación', 'err');
+    if (res.clipped) toast('Warning: the recording clipped', 'err');
   } catch (e) {
     run.rec = null;
-    toast('Error al guardar la grabación continua: ' + e.message, 'err');
+    toast('Couldn’t save the continuous recording: ' + e.message, 'err');
   }
   run.marks = [];
   run.busy = false;
@@ -910,7 +1004,7 @@ async function navigate(dir, fromAuto = false) {
   if (run.phase === 'intro') {
     if (dir < 0) return;
     if (isCont(t)) {
-      try { await startContinuous(); } catch (e) { return toast('Micrófono no disponible: ' + e.message, 'err'); }
+      try { await startContinuous(); } catch (e) { return toast('Microphone unavailable: ' + e.message, 'err'); }
     }
     run.phase = 'slide'; run.si = 0;
     return showSlide();
@@ -926,7 +1020,7 @@ async function navigate(dir, fromAuto = false) {
     return;
   }
   if (run.si < t.seq.length - 1) { run.si++; return showSlide(); }
-  // última slide de la tarea
+  // last slide of the task
   if (isCont(t)) await finishContinuous();
   run.phase = 'done';
   showSlide();
@@ -937,10 +1031,10 @@ async function runnerMenu() {
   const m = document.createElement('div');
   m.className = 'modal-back';
   m.innerHTML = `<div class="modal menu"><h3>${esc(run.session.participant)} · ${esc(curTask().task.title)}</h3>
-    <button class="btn" data-a="skip">Saltar al final de esta tarea</button>
-    <button class="btn" data-a="mic">Reabrir el micrófono</button>
-    <button class="btn danger" data-a="end">Terminar la sesión</button>
-    <button class="btn ghost" data-a="close">Volver</button></div>`;
+    <button class="btn" data-a="skip">Skip to the end of this task</button>
+    <button class="btn" data-a="mic">Reopen microphone</button>
+    <button class="btn danger" data-a="end">End session</button>
+    <button class="btn ghost" data-a="close">Back</button></div>`;
   document.body.appendChild(m);
   m.addEventListener('click', async (e) => {
     const a = e.target.closest('[data-a]'); if (!a) return;
@@ -952,7 +1046,7 @@ async function runnerMenu() {
     } else if (a.dataset.a === 'mic') {
       resumeAudio();
     } else if (a.dataset.a === 'end') {
-      const ok = await modal({ title: 'Terminar la sesión', body: '<p>Lo que esté grabándose se guardará. La sesión quedará marcada como incompleta.</p>', ok: 'Terminar', danger: true });
+      const ok = await modal({ title: 'End session', body: '<p>Anything being recorded will be saved. The session will be marked as incomplete.</p>', ok: 'End session', danger: true });
       if (!ok) return;
       if (run.rec && run.rec.kind === 'token') await stopToken();
       if (run.rec && run.rec.kind === 'continuous') await finishContinuous();
@@ -973,19 +1067,19 @@ async function finishSession(status) {
   engine.close();
   const files = await db.fileMeta(s.id);
   setScreen(`<div class="page">
-    <header class="topbar"><div></div><h2>Sesión ${status === 'complete' ? 'completada' : 'terminada'}</h2><div></div></header>
+    <header class="topbar"><div></div><h2>Session ${status === 'complete' ? 'complete' : 'ended'}</h2><div></div></header>
     <section class="panel center">
       <h3>${esc(s.participant)} · ${esc(s.session)}</h3>
-      <p>${files.filter((f) => f.kind === 'wav').length} archivos de audio · ${fmtBytes(files.reduce((a, f) => a + f.size, 0))}</p>
-      <p class="muted">Exporta la sesión cuanto antes al almacenamiento aprobado por tu IRB.</p>
-      <div class="row gap center"><button class="btn primary big" id="f-exp">Exportar ahora</button><button class="btn big" id="f-home">Inicio</button></div>
+      <p>${plural(files.filter((f) => f.kind === 'wav').length, 'audio file', 'audio files')} · ${fmtBytes(files.reduce((a, f) => a + f.size, 0))}</p>
+      <p class="muted">The recordings only exist on this device. Export the session now to the storage approved by your IRB.</p>
+      <div class="row gap center"><button class="btn primary big" id="f-exp">Export now</button><button class="btn big" id="f-home">Home</button></div>
       <div id="f-share"></div>
     </section></div>`, 'scroll');
   $('#f-home').addEventListener('click', () => go('home'));
   $('#f-exp').addEventListener('click', () => prepareExport(s.id, $('#f-share')));
 }
 
-// Interrupciones (cambio de app, llamada, bloqueo de pantalla)
+// Interruptions (app switch, phone call, screen lock)
 function logEvent(type, extra = {}) {
   if (!run) return;
   run.session.events.push({ type, time: new Date().toISOString(), task: curTask().task.name, slide: run.si + 1, recording: !!run.rec, ...extra });
@@ -997,13 +1091,13 @@ async function resumeAudio() {
     await engine.ensureRunning();
     $('#r-banner') && $('#r-banner').classList.add('hidden');
     if (run) logEvent('audio_resumed');
-  } catch (e) { toast('No se pudo reanudar el audio: ' + e.message, 'err'); }
+  } catch (e) { toast('Couldn’t resume audio: ' + e.message, 'err'); }
 }
 engine.onState((st) => {
   if (!run) return;
   if (st === 'interrupted' || st === 'suspended' || st === 'track-ended') {
     logEvent('audio_interrupted', { state: st });
-    showBanner(run.rec ? 'El audio se ha interrumpido y falta un fragmento. Toca aquí para reanudar.' : 'Audio en pausa. Toca aquí para reanudar.');
+    showBanner(run.rec ? 'Audio was interrupted and part of the recording is missing. Tap here to resume.' : 'Audio paused. Tap here to resume.');
   }
 });
 document.addEventListener('visibilitychange', () => {
@@ -1012,11 +1106,11 @@ document.addEventListener('visibilitychange', () => {
   else {
     logEvent('app_visible');
     requestWake();
-    if (!engine.isLive) showBanner('Toca aquí para reanudar el micrófono.');
+    if (!engine.isLive) showBanner('Tap here to resume the microphone.');
   }
 });
 
-// Teclado o mando de presentaciones (flechas / AvPág / RePág / espacio)
+// Keyboard or presentation remote (arrows / Page Down / Page Up / space)
 document.addEventListener('keydown', (e) => {
   if (!run || document.querySelector('.modal-back')) return;
   const k = e.key;
@@ -1028,25 +1122,25 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'Escape') runnerMenu();
 });
 
-// ---------- SESIONES Y EXPORTACIÓN ----------
+// ---------- SESSIONS AND EXPORT ----------
 async function screenSessions() {
   const sessions = (await db.all('sessions')).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const metas = await Promise.all(sessions.map((s) => db.fileMeta(s.id)));
-  const statusLbl = { complete: 'completa', incomplete: 'incompleta', in_progress: 'interrumpida', consent: 'sin empezar' };
-  setScreen(`<div class="page">${backBar('Sesiones', `<button class="btn" id="audit">Registro</button>`)}
+  const statusLbl = { complete: 'complete', incomplete: 'incomplete', in_progress: 'interrupted', consent: 'not started' };
+  setScreen(`<div class="page">${backBar('Sessions', `<button class="btn" id="audit">Log</button>`)}
     <div class="list">${sessions.map((s, i) => {
       const f = metas[i]; const size = f.reduce((a, x) => a + x.size, 0);
       return `<div class="item" data-id="${esc(s.id)}">
         <div class="item-main">
-          <div class="item-t">${esc(s.participant)} · ${esc(s.session)} <span class="tag ${s.exportedAt ? 'ok' : 'warn'}">${s.exportedAt ? 'exportada' : 'sin exportar'}</span></div>
-          <div class="item-s">${fmtDate(s.createdAt)} · ${esc(s.protocol.title)} · ${f.filter((x) => x.kind === 'wav').length} audios · ${fmtBytes(size)} · ${statusLbl[s.status] || s.status}</div>
+          <div class="item-t">${esc(s.participant)} · ${esc(s.session)} <span class="tag ${s.exportedAt ? 'ok' : 'warn'}">${s.exportedAt ? 'exported' : 'not exported'}</span></div>
+          <div class="item-s">${fmtDate(s.createdAt)} · ${esc(s.protocol.title)} · ${plural(f.filter((x) => x.kind === 'wav').length, 'audio file', 'audio files')} · ${fmtBytes(size)} · ${statusLbl[s.status] || s.status}</div>
           <div class="share-slot"></div>
         </div>
         <div class="item-actions">
-          <button class="btn primary" data-exp>Exportar</button>
-          <button class="btn ghost danger-t" data-del>Borrar</button>
+          <button class="btn primary" data-exp>Export</button>
+          <button class="btn ghost danger-t" data-del>Delete</button>
         </div></div>`;
-    }).join('') || '<p class="muted pad">Todavía no hay sesiones.</p>'}</div></div>`, 'scroll');
+    }).join('') || '<p class="muted pad">No sessions yet.</p>'}</div></div>`, 'scroll');
   bindBack();
   $$('.item[data-id]').forEach((el) => {
     const id = el.dataset.id;
@@ -1054,15 +1148,15 @@ async function screenSessions() {
     $('[data-del]', el).addEventListener('click', async () => {
       const s = sessions.find((x) => x.id === id);
       const ok = await modal({
-        title: `Borrar ${s.participant} · ${s.session}`,
-        body: s.exportedAt ? `<p>Exportada por última vez el ${fmtDate(s.exportedAt)}.</p>` : '<p><b>Esta sesión no se ha exportado nunca.</b> Si la borras, se perderán las grabaciones.</p>',
-        ok: 'Borrar del dispositivo', danger: true,
-        requireCheck: 'He comprobado que la exportación está guardada en un lugar seguro',
+        title: `Delete ${s.participant} · ${s.session}`,
+        body: s.exportedAt ? `<p>Last exported ${fmtDate(s.exportedAt)}.</p>` : '<p><b>This session has never been exported.</b> If you delete it, the recordings will be lost.</p>',
+        ok: 'Delete from device', danger: true,
+        requireCheck: 'I have checked that the export is saved somewhere safe',
       });
       if (!ok) return;
       const n = await db.deleteSession(id);
       await db.audit('session_deleted', { sessionId: id, participant: s.participant, files: n, wasExported: !!s.exportedAt });
-      toast('Sesión borrada');
+      toast('Session deleted');
       screenSessions();
     });
   });
@@ -1071,16 +1165,16 @@ async function screenSessions() {
 
 async function screenAudit() {
   const rows = (await db.all('audit')).reverse();
-  const lbl = { session_created: 'Sesión creada', session_completed: 'Sesión completada', session_ended_early: 'Sesión terminada antes de tiempo',
-    protocol_updated: 'Protocolo actualizado', export_prepared: 'Exportación preparada', export_shared: 'Exportación compartida', export_downloaded: 'Exportación descargada',
-    session_deleted: 'Sesión borrada', consent_declined: 'Consentimiento rechazado', protocol_imported: 'Protocolo importado', protocol_deleted: 'Protocolo borrado' };
-  setScreen(`<div class="page">${backBar('Registro de actividad', `<button class="btn" id="a-csv">Exportar CSV</button>`)}
-    <section class="panel"><table class="kv log">${rows.map((r) => `<tr><td class="muted">${fmtDate(r.time)}</td><td>${esc(lbl[r.action] || r.action)}</td><td>${esc(r.participant || r.protocol || '')}</td></tr>`).join('') || '<tr><td class="muted">Sin actividad.</td></tr>'}</table></section></div>`, 'scroll');
+  const lbl = { session_created: 'Session created', session_completed: 'Session completed', session_ended_early: 'Session ended early',
+    protocol_updated: 'Protocol updated', export_prepared: 'Export prepared', export_shared: 'Export shared', export_downloaded: 'Export downloaded',
+    session_deleted: 'Session deleted', consent_declined: 'Consent declined', protocol_imported: 'Protocol imported', protocol_deleted: 'Protocol deleted' };
+  setScreen(`<div class="page">${backBar('Activity log', `<button class="btn" id="a-csv">Export CSV</button>`)}
+    <section class="panel"><table class="kv log">${rows.map((r) => `<tr><td class="muted">${fmtDate(r.time)}</td><td>${esc(lbl[r.action] || r.action)}</td><td>${esc(r.participant || r.protocol || '')}</td></tr>`).join('') || '<tr><td class="muted">No activity yet.</td></tr>'}</table></section></div>`, 'scroll');
   bindBack();
   $('#a-csv').addEventListener('click', () => {
     const keys = ['time', 'action', 'sessionId', 'participant', 'protocol', 'files', 'wasExported', 'file'];
     const csv = [keys.join(',')].concat(rows.map((r) => keys.map((k) => csvCell(r[k])).join(','))).join('\n');
-    downloadBlob(new Blob([csv], { type: 'text/csv' }), `fieldrec_registro_${localDate()}.csv`);
+    downloadBlob(new Blob([csv], { type: 'text/csv' }), `fieldrec_log_${localDate()}.csv`);
   });
 }
 
@@ -1096,19 +1190,19 @@ function sessionJSON(s, files) {
   return { ...rest, files: files.map(({ blob, data, sessionId, ...f }) => f) };
 }
 
-const LEEME = (s) => `Exportación de Fieldrec ${APP_VERSION}
-Participante: ${s.participant} · Sesión: ${s.session} · Fecha: ${s.createdAt}
-Protocolo: ${s.protocol.title}
+const README_TXT = (s) => `Fieldrec ${APP_VERSION} export
+Participant: ${s.participant} · Session: ${s.session} · Date: ${s.createdAt}
+Protocol: ${s.protocol.title}
 
-audio/        Archivos WAV (y TextGrid de Praat para las tareas de grabación continua)
-trials.csv    Una fila por toma o por intervalo, con tiempos en segundos
-session.json  Metadatos completos: ajustes de audio solicitados y obtenidos, consentimiento,
-              orden de presentación (semilla ${s.seed}), incidencias e información del dispositivo
-protocolo/    Copia de los archivos de texto del protocolo usados en la sesión
+audio/        WAV files (and Praat TextGrids for continuous tasks)
+trials.csv    One row per take or interval, with times in seconds
+session.json  Full metadata: requested and obtained audio settings, consent,
+              presentation order (seed ${s.seed}), interruptions and device information
+protocol/     Copy of the protocol text files used in the session
 `;
 
 async function prepareExport(sessionId, slot) {
-  slot.innerHTML = '<div class="progress"><div></div></div><span class="muted small">Preparando…</span>';
+  slot.innerHTML = '<div class="progress"><div></div></div><span class="muted small">Preparing…</span>';
   try {
     const s = await db.get('sessions', sessionId);
     const files = await db.filesForSession(sessionId);
@@ -1117,8 +1211,8 @@ async function prepareExport(sessionId, slot) {
     const entries = files.map((f) => ({ name: `${F}/audio/${f.name}`, data: f.data || f.blob }));
     entries.push({ name: `${F}/session.json`, data: JSON.stringify(sessionJSON(s, files), null, 2) });
     entries.push({ name: `${F}/trials.csv`, data: trialsCSV(s) });
-    for (const [n, t] of Object.entries(s.protocolTexts || {})) entries.push({ name: `${F}/protocolo/${n.split('/').pop()}`, data: t });
-    entries.push({ name: `${F}/LEEME.txt`, data: LEEME(s) });
+    for (const [n, t] of Object.entries(s.protocolTexts || {})) entries.push({ name: `${F}/protocol/${n.split('/').pop()}`, data: t });
+    entries.push({ name: `${F}/README.txt`, data: README_TXT(s) });
     const bar = $('.progress div', slot);
     const zip = await makeZip(entries, (p) => { if (bar) bar.style.width = (p * 100).toFixed(0) + '%'; });
     const file = new File([zip], `${F}.zip`, { type: 'application/zip' });
@@ -1126,8 +1220,8 @@ async function prepareExport(sessionId, slot) {
     await db.audit('export_prepared', { sessionId, participant: s.participant, file: file.name });
     const canShare = navigator.canShare && navigator.canShare({ files: [file] });
     slot.innerHTML = `<div class="row gap wrap">
-      ${canShare ? '<button class="btn primary" data-share>Compartir / Guardar en Archivos</button>' : ''}
-      <button class="btn" data-dl>Descargar ZIP</button>
+      ${canShare ? '<button class="btn primary" data-share>Share / Save to Files</button>' : ''}
+      <button class="btn" data-dl>Download ZIP</button>
       <span class="muted small">${esc(file.name)} · ${fmtBytes(file.size)}</span></div>`;
     const mark = async (how) => {
       s.exportedAt = new Date().toISOString();
@@ -1137,12 +1231,12 @@ async function prepareExport(sessionId, slot) {
     };
     const sh = $('[data-share]', slot);
     if (sh) sh.addEventListener('click', async () => {
-      try { await navigator.share({ files: [file], title: file.name }); await mark('share'); toast('Exportación compartida'); }
-      catch (e) { if (e.name !== 'AbortError') toast('No se pudo compartir: ' + e.message, 'err'); }
+      try { await navigator.share({ files: [file], title: file.name }); await mark('share'); toast('Export shared'); }
+      catch (e) { if (e.name !== 'AbortError') toast('Couldn’t share: ' + e.message, 'err'); }
     });
     $('[data-dl]', slot).addEventListener('click', async () => { downloadBlob(file, file.name); await mark('download'); });
   } catch (e) {
-    slot.innerHTML = `<div class="notice warn">Error al exportar: ${esc(e.message)}</div>`;
+    slot.innerHTML = `<div class="notice warn">Export failed: ${esc(e.message)}</div>`;
   }
 }
 
@@ -1155,12 +1249,19 @@ function downloadBlob(blob, name) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
 }
 
-// ---------- arranque ----------
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+// ---------- startup ----------
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading || run) return;
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then((reg) => reg.update()).catch(() => {});
 }
 window.addEventListener('beforeunload', (e) => { if (run) { e.preventDefault(); e.returnValue = ''; } });
-// Evita el zoom por doble toque y el gesto de pellizco durante la sesión
+// Block double-tap zoom and pinch gestures during sessions
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 window.__fieldrec = { engine, get run() { return run; }, db };
 screenHome();

@@ -1,6 +1,6 @@
-// Remuestreo (sinc con ventana de Kaiser) y codificación WAV.
-// Se usa dentro del worker (wav-worker.js) y también se puede importar en pruebas.
-// Escrito como script clásico: expone `FieldrecDSP` en el ámbito global.
+// Resampling (Kaiser-windowed sinc) and WAV encoding.
+// Used inside the worker (wav-worker.js) and importable in tests.
+// Written as a classic script: exposes `FieldrecDSP` on the global scope.
 
 (function (global) {
   'use strict';
@@ -18,18 +18,18 @@
 
   function gcd(a, b) { a = Math.round(a); b = Math.round(b); while (b) { [a, b] = [b, a % b]; } return a; }
 
-  // Remuestreo de banda limitada.
-  // zeroCrossings = 64 y beta = 8 → atenuación de ~80 dB en la banda de rechazo;
-  // el corte se coloca al 96 % del Nyquist más bajo para que la transición termine antes del Nyquist.
+  // Band-limited resampling.
+  // zeroCrossings = 64 and beta = 8 → ~80 dB stopband attenuation;
+  // the cutoff sits at 96% of the lower Nyquist so the transition band ends before Nyquist.
   function resample(input, fsIn, fsOut, opts) {
     if (fsIn === fsOut) return input;
     opts = opts || {};
     const zc = opts.zeroCrossings || 64;
     const beta = opts.beta || 8;
     const ratio = fsOut / fsIn;
-    const fc = Math.min(1, ratio) * (opts.cutoff || 0.96); // relativo al Nyquist de entrada
-    const halfWidth = zc / fc; // en muestras de entrada
-    const RES = 512; // puntos de tabla por muestra de entrada
+    const fc = Math.min(1, ratio) * (opts.cutoff || 0.96); // relative to the input Nyquist
+    const halfWidth = zc / fc; // in input samples
+    const RES = 512; // table points per input sample
     const tableLen = Math.ceil(halfWidth * RES) + 2;
     const table = new Float32Array(tableLen);
     const i0b = besselI0(beta);
@@ -56,7 +56,7 @@
       return table[i] + (table[i + 1] - table[i]) * (pos - i);
     };
 
-    // Vía rápida polifásica para razones racionales (48000↔44100, 48000→16000, etc.)
+    // Fast polyphase path for rational ratios (48000↔44100, 48000→16000, etc.)
     const g = gcd(fsIn, fsOut);
     const L = fsOut / g, M = fsIn / g;
     if (Number.isInteger(L) && Number.isInteger(M) && L <= 2000) {
@@ -107,7 +107,7 @@
     return out;
   }
 
-  // Codifica un Float32Array mono en WAV. bitDepth: 16 | 24 | 32 (32 = float IEEE).
+  // Encodes a mono Float32Array as WAV. bitDepth: 16 | 24 | 32 (32 = IEEE float).
   function encodeWav(samples, sampleRate, bitDepth) {
     const isFloat = bitDepth === 32;
     const bytesPer = bitDepth / 8;
@@ -124,8 +124,8 @@
 
     str('RIFF'); u32(buf.byteLength - 8); str('WAVE');
     str('fmt '); u32(fmtLen);
-    u16(isFloat ? 3 : 1); // formato
-    u16(1); // canales
+    u16(isFloat ? 3 : 1); // format
+    u16(1); // channels
     u32(sampleRate);
     u32(sampleRate * bytesPer); // byte rate
     u16(bytesPer); // block align
@@ -155,7 +155,7 @@
     } else if (isFloat) {
       for (let i = 0; i < n; i++) { v.setFloat32(p, samples[i], true); p += 4; }
     } else {
-      throw new Error('Profundidad de bits no admitida: ' + bitDepth);
+      throw new Error('Unsupported bit depth: ' + bitDepth);
     }
     return buf;
   }

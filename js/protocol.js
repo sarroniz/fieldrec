@@ -1,4 +1,5 @@
-// Lectura de protocolos en Markdown y CSV, y un renderizador de Markdown mínimo (sin dependencias).
+// Markdown and CSV protocol reader, plus a minimal dependency-free Markdown renderer.
+// Spanish keys (tarea, grabacion, …) are accepted as aliases of the English ones.
 
 const KNOWN_KEYS = new Set([
   'title', 'titulo', 'author', 'autor', 'language', 'idioma', 'consent', 'consentimiento',
@@ -12,7 +13,7 @@ const ALIASES = {
 };
 
 export const RECORDING_MODES = {
-  continuous: 'Continua', per_token: 'Por token', both: 'Continua + cortes', none: 'Sin grabación',
+  continuous: 'Continuous', per_token: 'Per token', both: 'Continuous + cuts', none: 'No recording',
 };
 
 function normRecording(v) {
@@ -43,7 +44,7 @@ export function slugify(s, max = 24) {
   return out.slice(0, max).replace(/_+$/, '');
 }
 
-// Texto plano a partir de Markdown (para etiquetas de TextGrid y CSV)
+// Plain text from Markdown (for TextGrid and CSV labels)
 export function plainText(md) {
   return String(md || '')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -104,7 +105,7 @@ function rowToSlide(row, carrier) {
   return { id: slugify(row.id || text || image.replace(/\.[^.]+$/, '')), md: md.trim(), label: text || image };
 }
 
-// ---------- Markdown → protocolo ----------
+// ---------- Markdown → protocol ----------
 function parseConfigBlock(lines) {
   const nonEmpty = lines.filter((l) => l.trim() !== '');
   if (!nonEmpty.length) return null;
@@ -121,8 +122,8 @@ function parseConfigBlock(lines) {
 
 function newTask(cfg, index) {
   return {
-    name: slugify(cfg.task || `tarea${index + 1}`, 30) || `tarea${index + 1}`,
-    title: cfg.label || cfg.task || `Tarea ${index + 1}`,
+    name: slugify(cfg.task || `task${index + 1}`, 30) || `task${index + 1}`,
+    title: cfg.label || cfg.task || `Task ${index + 1}`,
     recording: normRecording(cfg.recording) || 'per_token',
     randomize: normRandom(cfg.randomize),
     repetitions: Math.max(1, Math.min(20, parseInt(cfg.repetitions, 10) || 1)),
@@ -145,7 +146,7 @@ function applyTaskCfg(task, cfg) {
 
 /**
  * source = { mainName, readText(name) → Promise<string> }
- * Devuelve { title, consent, meta, tasks, warnings }
+ * Returns { title, consent, meta, tasks, warnings, missing }
  */
 export async function parseProtocol(source) {
   const warnings = [];
@@ -203,7 +204,7 @@ export async function parseProtocol(source) {
     protocol.title = protocol.meta.title || main.replace(/\.[^.]+$/, '');
   }
 
-  // Ítems desde CSV referenciado en la cabecera de la tarea (items: palabras.csv)
+  // Items from a CSV referenced in the task header (items: words.csv)
   for (const t of protocol.tasks) {
     if (!t.items) continue;
     try {
@@ -211,28 +212,28 @@ export async function parseProtocol(source) {
       for (const row of rows) { const s = rowToSlide(row, t.carrier); if (s.md) t.slides.push(s); }
     } catch (e) {
       protocol.missing.push(t.items);
-      warnings.push(`Falta «${t.items}», la lista de ítems de la tarea «${t.title}».`);
+      warnings.push(`Missing “${t.items}”, the item list for task “${t.title}”.`);
     }
   }
 
-  // Consentimiento: texto literal o archivo .md
+  // Consent: literal text or a .md file
   const consent = protocol.meta.consent || '';
   if (/\.(md|txt)$/i.test(consent)) {
     try { protocol.consent = await source.readText(consent); }
-    catch (e) { protocol.missing.push(consent); warnings.push(`Falta «${consent}», el texto de consentimiento.`); }
+    catch (e) { protocol.missing.push(consent); warnings.push(`Missing “${consent}”, the consent text.`); }
   } else protocol.consent = consent;
 
-  // Identificadores por defecto
+  // Default identifiers
   for (const t of protocol.tasks) {
     t.slides.forEach((s, i) => { if (!s.id) s.id = `s${String(i + 1).padStart(2, '0')}`; });
-    if (!t.slides.length && !protocol.missing.includes(t.items)) warnings.push(`La tarea «${t.title}» no tiene slides.`);
+    if (!t.slides.length && !protocol.missing.includes(t.items)) warnings.push(`Task “${t.title}” has no slides.`);
   }
   protocol.tasks = protocol.tasks.filter((t) => t.slides.length);
-  if (!protocol.tasks.length) warnings.push('El protocolo no contiene ninguna tarea con slides.');
+  if (!protocol.tasks.length) warnings.push('The protocol contains no task with slides.');
   return protocol;
 }
 
-// Imágenes locales que usa el protocolo (para comprobar que se han importado y para exportarlo)
+// Local images used by the protocol (to check they were imported, and to export it)
 export function referencedImages(protocol) {
   const set = new Set();
   const scan = (md) => {
@@ -245,7 +246,7 @@ export function referencedImages(protocol) {
   return [...set];
 }
 
-// ---------- Aleatorización reproducible ----------
+// ---------- Reproducible randomization ----------
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -262,7 +263,7 @@ function shuffle(arr, rnd) {
   return a;
 }
 
-// Secuencia de presentación: [{ slide, rep, item }] por tarea
+// Presentation sequence for one task: [{ slide, rep, item }]
 export function buildSequence(task, seed) {
   const rnd = mulberry32(seed);
   const items = task.slides.map((s, i) => ({ slide: s, item: i + 1 }));
@@ -279,7 +280,7 @@ export function buildSequence(task, seed) {
   return seq;
 }
 
-// ---------- Markdown mínimo ----------
+// ---------- Minimal Markdown ----------
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

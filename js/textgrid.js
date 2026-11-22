@@ -1,5 +1,5 @@
-// TextGrid de Praat (formato largo) con un tier de intervalos.
-// intervals: [{ start, end, label }] en segundos; los huecos se rellenan con intervalos vacíos.
+// Praat TextGrid (long text format) with interval tiers.
+// intervals: [{ start, end, label }] in seconds; gaps are filled with empty intervals.
 
 function q(s) { return '"' + String(s ?? '').replace(/"/g, '""') + '"'; }
 

@@ -1,4 +1,4 @@
-// IndexedDB: sesiones, archivos de audio, protocolos importados y registro de auditoría.
+// IndexedDB: sessions, audio files, imported protocols and the audit log.
 const DB_NAME = 'fieldrec';
 const DB_VERSION = 1;
 let dbp = null;
@@ -31,7 +31,7 @@ function tx(store, mode, fn) {
     Promise.resolve(fn(s)).then((r) => { result = r; });
     t.oncomplete = () => resolve(result);
     t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error('Transacción abortada'));
+    t.onabort = () => reject(t.error || new Error('Transaction aborted'));
   }));
 }
 const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -42,7 +42,7 @@ export const db = {
   all: (store) => tx(store, 'readonly', (s) => reqP(s.getAll())),
   del: (store, key) => tx(store, 'readwrite', (s) => reqP(s.delete(key))),
   filesForSession: (sessionId) => tx('files', 'readonly', (s) => reqP(s.index('session').getAll(sessionId))),
-  // Metadatos de archivos sin cargar los blobs en la interfaz
+  // File metadata without loading the audio data into the interface
   async fileMeta(sessionId) {
     const files = await this.filesForSession(sessionId);
     return files.map(({ blob, data, ...rest }) => rest);

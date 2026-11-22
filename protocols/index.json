@@ -1,5 +1,5 @@
 {
   "protocols": [
-    { "id": "ejemplo", "path": "ejemplo/protocolo.md", "title": "Protocolo de ejemplo" }
+    { "id": "example-es", "path": "example-es/protocol.md", "title": "Example protocol (Spanish)" }
   ]
 }

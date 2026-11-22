@@ -1,5 +1,5 @@
-// Generador de ZIP sin compresión (método "store"), sin dependencias.
-// El audio WAV apenas se comprime, así que "store" es rápido y suficiente.
+// Dependency-free ZIP writer without compression ("store" method).
+// WAV audio barely compresses, so "store" is fast and good enough.
 
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -35,7 +35,7 @@ export async function makeZip(entries, onProgress) {
   for (const e of entries) {
     let data = e.data, crc, size;
     if (data instanceof Blob) {
-      // se calcula el CRC y se conserva el Blob original (no se duplica el audio en memoria)
+      // compute the CRC but keep the original Blob (avoids duplicating audio in memory)
       const bytes = new Uint8Array(await data.arrayBuffer());
       crc = crc32(bytes); size = bytes.length;
     } else {
@@ -48,7 +48,7 @@ export async function makeZip(entries, onProgress) {
     const lh = new DataView(new ArrayBuffer(30));
     lh.setUint32(0, 0x04034b50, true);
     lh.setUint16(4, 20, true);
-    lh.setUint16(6, 0x0800, true); // nombres en UTF-8
+    lh.setUint16(6, 0x0800, true); // UTF-8 file names
     lh.setUint16(8, 0, true);
     lh.setUint16(10, time, true);
     lh.setUint16(12, date, true);

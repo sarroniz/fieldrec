@@ -1,4 +1,4 @@
-// Worker: remuestrea y codifica fuera del hilo principal para que la interfaz no se congele.
+// Worker: resamples and encodes off the main thread so the interface doesn't freeze.
 importScripts('dsp.js');
 
 self.onmessage = (e) => {

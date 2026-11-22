@@ -1,6 +1,6 @@
-// Motor de captura: micrófono → AudioWorklet → bloques Float32 en memoria.
-// Mantiene el micrófono abierto durante toda la sesión (evita retardos y avisos repetidos de permiso)
-// y guarda siempre el último segundo en un búfer circular para el pre-roll.
+// Capture engine: microphone → AudioWorklet → Float32 blocks in memory.
+// Keeps the microphone open for the whole session (no start-up lag or repeated permission prompts)
+// and always keeps the last second in a ring buffer for pre-roll.
 
 export const REQUESTED_CONSTRAINTS = {
   echoCancellation: false,
@@ -55,7 +55,7 @@ export class AudioEngine {
     this.track = this.stream.getAudioTracks()[0];
     this.track.addEventListener('ended', () => this._emitState('track-ended'));
 
-    // El contexto se crea DESPUÉS de obtener el micrófono para que adopte la frecuencia del hardware.
+    // The context is created AFTER getting the microphone so it adopts the hardware sample rate.
     if (!this.ctx || this.ctx.state === 'closed') {
       const AC = window.AudioContext || window.webkitAudioContext;
       const ctx = new AC({ latencyHint: 'interactive' });
@@ -79,7 +79,7 @@ export class AudioEngine {
     this._emitState('open');
   }
 
-  // Llamar antes de grabar: reabre el micrófono si iOS lo cerró (p. ej. tras pasar a segundo plano).
+  // Call before recording: reopens the microphone if iOS closed it (e.g. after going to the background).
   async ensureRunning() {
     if (!this.track || this.track.readyState !== 'live') await this._openStream();
     if (this.ctx.state !== 'running') await this.ctx.resume();
@@ -116,7 +116,7 @@ export class AudioEngine {
 
   _onBlock({ samples, peak, clipped, endFrame }) {
     this.lastEndFrame = endFrame;
-    // búfer circular de ~1 s para el pre-roll
+    // ~1 s ring buffer for pre-roll
     this.ring.push(samples);
     this.ringLen += samples.length;
     const maxRing = (this.sampleRate || 48000) * 1.0;
@@ -131,7 +131,7 @@ export class AudioEngine {
   }
 
   start(prerollMs = 0) {
-    if (!this.ctx) throw new Error('El micrófono no está abierto');
+    if (!this.ctx) throw new Error('The microphone is not open');
     const sr = this.sampleRate;
     let need = Math.round((prerollMs / 1000) * sr);
     const pre = [];
@@ -148,7 +148,7 @@ export class AudioEngine {
     this.startedAt = new Date();
   }
 
-  // Posición actual (en muestras a la frecuencia nativa) relativa al inicio de la grabación en curso.
+  // Current position (in native-rate samples) relative to the start of the current recording.
   offset() {
     if (!this.ctx) return 0;
     return Math.max(0, Math.round(this.ctx.currentTime * this.sampleRate) - this.startFrame);
@@ -156,7 +156,7 @@ export class AudioEngine {
 
   async stop(postrollMs = 0) {
     if (!this.recording) return null;
-    // esperar el post-roll y un bloque más para vaciar lo que haya en el worklet
+    // wait for the post-roll plus one block to flush whatever is still in the worklet
     const blockMs = (2048 / this.sampleRate) * 1000;
     await new Promise((r) => setTimeout(r, postrollMs + blockMs + 10));
     this.recording = false;
@@ -170,7 +170,7 @@ export class AudioEngine {
 
   cancel() { this.recording = false; this.chunks = []; }
 
-  // Remuestrea + codifica en el worker. slices: [[inicio, fin], ...] en muestras nativas.
+  // Resample + encode in the worker. slices: [[start, end], ...] in native samples.
   encode(samples, inRate, outRate, bitDepth, slices) {
     if (!this.worker) {
       this.worker = new Worker(new URL('./wav-worker.js', import.meta.url));
