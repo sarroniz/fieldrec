@@ -7,7 +7,7 @@ Web app para trabajo de campo: muestra las tareas (slides) de un protocolo y gra
 - WAV mono a la frecuencia nativa o remuestreado (48 000, 44 100, 22 050 o 16 000 Hz), a 16 bits, 24 bits o 32 bits float.
 - Exportación en ZIP con los WAV, TextGrid de Praat para las tareas continuas, `trials.csv` y `session.json`.
 
-> **Prototipo (v0.1.0).** Pruébalo en tu iPad antes de usarlo con participantes.
+> **Prototipo (v0.1.1).** Pruébalo en tu iPad antes de usarlo con participantes.
 
 ---
 
@@ -112,7 +112,12 @@ vocales,pupa,,
 ### Añadir protocolos
 
 - **Incluidos en la web:** crea una carpeta en `protocols/` y añádela a `protocols/index.json`. Si quieres que funcione sin conexión desde el primer momento, añade también sus archivos a la lista `SHELL` de `sw.js`.
-- **Importados en el iPad:** Protocolos → **Importar archivos**. Selecciona a la vez el `.md` (o `.csv`), los CSV que use y las imágenes. Las rutas como `img/sol.svg` se emparejan por nombre de archivo, así que no puede haber dos imágenes con el mismo nombre.
+- **Importados en el iPad o el ordenador:** Protocolos → **Importar archivos o .zip**. Hay tres formas:
+  1. **Un .zip con la carpeta del protocolo (recomendado).** En la app Archivos, mantén pulsada la carpeta y elige **Comprimir**. Se respetan las subcarpetas, como `img/`.
+  2. **Una carpeta** (botón **Importar carpeta**, solo en ordenador).
+  3. **Archivos sueltos:** el `.md` o `.csv` y los archivos que usa. Si falta alguno, la app lo indica y puedes añadirlo con **Añadir archivos o .zip**. Los archivos se emparejan por nombre, así que no puede haber dos imágenes que se llamen igual.
+
+  En la vista previa de cualquier protocolo, **Descargar .zip** genera una plantilla lista para editar y volver a importar.
 
 Las imágenes tienen que estar en el propio protocolo. Por seguridad, la app bloquea cualquier recurso externo, incluidas las imágenes enlazadas desde otra web.
 
@@ -162,7 +167,7 @@ P01_s1_2026-11-22/
 - El consentimiento registra por separado la participación, la grabación y el archivo para uso futuro, con fecha y hora. Opcionalmente se puede grabar el consentimiento verbal.
 - Para borrar una sesión hay que confirmar antes que la exportación está guardada, y el borrado queda en el registro.
 
-## Limitaciones conocidas (v0.1.0)
+## Limitaciones conocidas (v0.1.1)
 
 - Solo mono.
 - Una tarea continua se mantiene en memoria hasta que termina. Conviene que cada tarea continua no pase de unos 30–40 minutos. Si Safari se cierra en mitad de una tarea continua, esa tarea se pierde; las tomas por token se guardan una a una.
@@ -183,6 +188,7 @@ js/wav-worker.js        worker que remuestrea y codifica sin bloquear la interfa
 js/protocol.js          lector de Markdown y CSV y aleatorización
 js/db.js                IndexedDB
 js/zip.js               generador de ZIP
+js/unzip.js             lector de ZIP (importación de protocolos)
 js/textgrid.js          TextGrid de Praat
 sw.js                   caché para usarla sin conexión
 protocols/              protocolos incluidos (index.json + carpetas)

@@ -45,7 +45,7 @@ export const db = {
   // Metadatos de archivos sin cargar los blobs en la interfaz
   async fileMeta(sessionId) {
     const files = await this.filesForSession(sessionId);
-    return files.map(({ blob, ...rest }) => rest);
+    return files.map(({ blob, data, ...rest }) => rest);
   },
   async deleteSession(sessionId) {
     const files = await this.filesForSession(sessionId);

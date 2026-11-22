@@ -55,6 +55,10 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 .prose h1 { font-size: 26px; margin: 0 0 12px; }
 .notice { background: var(--accent-soft); color: #1f4d44; border-radius: 12px; padding: 12px 14px; margin: 0 0 14px; font-size: 15px; line-height: 1.4; }
 .notice.warn { background: var(--warn-soft); color: #6b4b00; }
+.notice .missing { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+.notice .missing code { background: rgba(154,106,0,.12); }
+.notice .row { margin-bottom: 6px; }
+.notice small { color: #6b4b00; opacity: .85; }
 
 .row { display: flex; align-items: center; }
 .row.gap { gap: 10px; }

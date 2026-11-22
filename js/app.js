@@ -1,10 +1,11 @@
 import { AudioEngine } from './audio.js';
-import { parseProtocol, buildSequence, renderMarkdown, slugify, RECORDING_MODES } from './protocol.js';
+import { parseProtocol, buildSequence, renderMarkdown, slugify, referencedImages, RECORDING_MODES } from './protocol.js';
+import { unzip } from './unzip.js';
 import { db } from './db.js';
 import { makeZip } from './zip.js';
 import { makeTextGrid } from './textgrid.js';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.1';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;           // sesión en curso
@@ -84,6 +85,23 @@ async function listProtocols() {
 }
 
 const isAbs = (s) => /^(https?:|data:|blob:)/i.test(s);
+
+// Rutas dentro de un protocolo importado: sin "./", sin barras iniciales, con ".." resuelto.
+function normPath(p) {
+  const out = [];
+  for (const seg of String(p || '').replace(/\\/g, '/').split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop(); else out.push(seg);
+  }
+  return out.join('/');
+}
+const baseName = (p) => normPath(p).split('/').pop();
+const dirName = (p) => { const n = normPath(p); return n.includes('/') ? n.slice(0, n.lastIndexOf('/')) : ''; };
+// Los archivos se guardan como { type, data: ArrayBuffer } (más fiable que Blob en IndexedDB de Safari)
+const toBlob = (v) => (v instanceof Blob ? v : new Blob([v.data], { type: v.type || '' }));
+const missingImg = (name) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect x="4" y="4" width="392" height="292" rx="16" fill="#fbf1d6" stroke="#9a6a00" stroke-width="4" stroke-dasharray="14 10"/><text x="200" y="140" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="26" fill="#6b4b00">Falta la imagen</text><text x="200" y="180" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="22" fill="#6b4b00">${esc(baseName(name)).slice(0, 30)}</text></svg>`);
+
 function sourceFor(entry) {
   if (entry.kind === 'builtin') {
     const mainURL = new URL('protocols/' + entry.path, location.href);
@@ -92,21 +110,30 @@ function sourceFor(entry) {
       mainName: decodeURIComponent(mainURL.pathname.split('/').pop()),
       readText: async (name) => { const r = await fetch(new URL(name, base)); if (!r.ok) throw new Error(name); return r.text(); },
       resolve: (src) => (isAbs(src) ? src : new URL(src, base).href),
+      has: null,
     };
   }
-  const byBase = {};
-  for (const [n, b] of Object.entries(entry.record.files)) byBase[n.split('/').pop().toLowerCase()] = b;
+  const files = entry.record.files;
+  const byPath = new Map(), byBase = new Map();
+  for (const [n, v] of Object.entries(files)) {
+    byPath.set(normPath(n).toLowerCase(), v);
+    const b = baseName(n).toLowerCase();
+    if (!byBase.has(b)) byBase.set(b, v);
+  }
+  const mainDir = dirName(entry.record.mainName);
+  // 1) ruta relativa al archivo principal, 2) ruta tal cual, 3) solo el nombre de archivo
+  const find = (name) => byPath.get(normPath((mainDir ? mainDir + '/' : '') + name).toLowerCase())
+    || byPath.get(normPath(name).toLowerCase()) || byBase.get(baseName(name).toLowerCase());
   const urls = {};
-  const find = (name) => byBase[String(name).split('/').pop().toLowerCase()];
   return {
     mainName: entry.record.mainName,
-    readText: async (name) => { const b = find(name); if (!b) throw new Error(name); return b.text(); },
+    readText: async (name) => { const v = find(name); if (!v) throw new Error(name); return toBlob(v).text(); },
     resolve: (src) => {
       if (isAbs(src)) return src;
-      const k = src.split('/').pop().toLowerCase();
-      if (!urls[k]) { const b = byBase[k]; urls[k] = b ? URL.createObjectURL(b) : src; }
-      return urls[k];
+      if (!(src in urls)) { const v = find(src); urls[src] = v ? URL.createObjectURL(toBlob(v)) : missingImg(src); }
+      return urls[src];
     },
+    has: (name) => !!find(name),
   };
 }
 
@@ -117,6 +144,11 @@ async function loadProtocolEntry(entry) {
     mainName: src.mainName,
     readText: async (n) => { const t = await src.readText(n); texts[n] = t; return t; },
   });
+  if (src.has) {
+    for (const img of referencedImages(proto)) {
+      if (!src.has(img) && !proto.missing.includes(img)) proto.missing.push(img);
+    }
+  }
   proto.resolve = src.resolve;
   proto.texts = texts;
   proto.entry = entry;
@@ -277,16 +309,83 @@ async function screenMic() {
 }
 
 // ---------- PROTOCOLOS ----------
-async function screenProtocols() {
+const IMPORT_ACCEPT = '.zip,application/zip,.md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*';
+const canPickFolder = () => matchMedia('(pointer: fine)').matches && 'webkitdirectory' in document.createElement('input');
+const isJunk = (p) => /(^|\/)(__MACOSX|\.git)(\/|$)/.test(p) || /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(p) || /(^|\/)\._/.test(p);
+
+// Archivos sueltos, una carpeta (escritorio) o ZIP → [{ path, type, data: ArrayBuffer }]
+async function collectFiles(fileList) {
+  let out = [];
+  for (const f of fileList) {
+    if (/\.zip$/i.test(f.name) || f.type === 'application/zip') {
+      for (const e of await unzip(f)) out.push({ path: normPath(e.name), type: guessType(e.name), data: e.data });
+    } else {
+      out.push({ path: normPath(f.webkitRelativePath || f.name), type: f.type || guessType(f.name), data: await f.arrayBuffer() });
+    }
+  }
+  out = out.filter((f) => f.path && !isJunk(f.path));
+  // Si todo está dentro de una misma carpeta (p. ej. el ZIP de «ejemplo/»), se quita ese prefijo
+  while (out.length && out.every((f) => f.path.includes('/')) && new Set(out.map((f) => f.path.split('/')[0])).size === 1) {
+    out.forEach((f) => { f.path = f.path.slice(f.path.indexOf('/') + 1); });
+  }
+  return out;
+}
+
+async function chooseMain(files) {
+  const depth = (f) => f.path.split('/').length;
+  const byDepth = (a, b) => depth(a) - depth(b) || a.path.localeCompare(b.path);
+  const mds = files.filter((f) => /\.(md|markdown)$/i.test(f.path)).sort(byDepth);
+  for (const f of mds) {
+    if (/^\s*(task|tarea)\s*:/im.test(new TextDecoder().decode(f.data))) return f;
+  }
+  return mds[0] || files.filter((f) => /\.(csv|tsv)$/i.test(f.path)).sort(byDepth)[0] || null;
+}
+
+async function importFiles(fileList, existing = null) {
+  const files = await collectFiles(fileList);
+  if (!files.length) throw new Error('No se ha seleccionado ningún archivo válido');
+  let rec = existing;
+  if (!rec) {
+    const main = await chooseMain(files);
+    if (!main) throw new Error('No hay ningún archivo de protocolo (.md o .csv)');
+    rec = { id: 'imp:' + uuid(), title: '', mainName: main.path, files: {}, importedAt: new Date().toISOString() };
+  }
+  for (const f of files) rec.files[f.path] = { type: f.type, data: f.data };
+  const proto = await loadProtocolEntry({ kind: 'imported', record: rec });
+  rec.title = proto.title;
+  rec.updatedAt = new Date().toISOString();
+  await db.put('protocols', rec);
+  await db.audit(existing ? 'protocol_updated' : 'protocol_imported', { protocol: rec.title, files: files.length });
+  return { rec, proto };
+}
+
+function importButtons(id, label) {
+  return `<label class="btn primary">${esc(label)}<input type="file" id="${id}" multiple accept="${IMPORT_ACCEPT}" hidden></label>
+    ${canPickFolder() ? `<label class="btn">${label.startsWith('Añadir') ? 'Añadir carpeta' : 'Importar carpeta'}<input type="file" id="${id}-dir" webkitdirectory hidden></label>` : ''}`;
+}
+function bindImport(id, handler) {
+  for (const sel of [`#${id}`, `#${id}-dir`]) {
+    const el = $(sel);
+    if (el) el.addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      if (files.length) await handler(files);
+    });
+  }
+}
+
+async function screenProtocols(showId) {
   const list = await listProtocols();
-  setScreen(`<div class="page">${backBar('Protocolos', `<label class="btn primary">Importar archivos<input type="file" id="imp" multiple accept=".md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*" hidden></label>`)}
+  setScreen(`<div class="page">${backBar('Protocolos')}
     <section class="panel">
-      <p class="muted">Selecciona a la vez el archivo del protocolo (<b>.md</b> o <b>.csv</b>) y sus imágenes o listas CSV. Las rutas como <code>img/sol.svg</code> se emparejan por nombre de archivo.</p>
+      <h3>Importar un protocolo</h3>
+      <p class="muted">La forma más sencilla es un <b>.zip con la carpeta del protocolo</b> (en la app Archivos: mantén pulsada la carpeta → <b>Comprimir</b>). También puedes seleccionar a la vez el archivo <b>.md</b> o <b>.csv</b> y los archivos que usa; si falta alguno, podrás añadirlo después.</p>
+      <div class="row gap wrap">${importButtons('imp', 'Importar archivos o .zip')}</div>
     </section>
     <div class="list">${list.map((p) => `
       <div class="item">
         <div class="item-main"><div class="item-t">${esc(p.title)}</div>
-          <div class="item-s">${p.kind === 'builtin' ? 'Incluido en la web' : `Importado · ${Object.keys(p.record.files).length} archivos · ${fmtDate(p.record.importedAt)}`}</div></div>
+          <div class="item-s">${p.kind === 'builtin' ? 'Incluido en la web' : `Importado · ${Object.keys(p.record.files).length} archivos · ${fmtDate(p.record.updatedAt || p.record.importedAt)}`}</div></div>
         <div class="item-actions">
           <button class="btn" data-preview="${esc(p.id)}">Ver</button>
           ${p.kind === 'imported' ? `<button class="btn ghost danger-t" data-del="${esc(p.id)}">Borrar</button>` : ''}
@@ -294,26 +393,11 @@ async function screenProtocols() {
       </div>`).join('') || '<p class="muted">No hay protocolos.</p>'}</div>
     <div id="preview"></div></div>`, 'scroll');
   bindBack();
-  $('#imp').addEventListener('change', async (e) => {
-    const files = [...e.target.files];
-    if (!files.length) return;
+  bindImport('imp', async (files) => {
     try {
-      const map = {};
-      for (const f of files) map[f.name] = f;
-      const texts = files.filter((f) => /\.(md|markdown)$/i.test(f.name));
-      let main = null;
-      for (const f of texts) { const t = await f.text(); if (/^\s*(task|tarea)\s*:/im.test(t)) { main = f; break; } }
-      main = main || texts[0] || files.find((f) => /\.(csv|tsv)$/i.test(f.name));
-      if (!main) throw new Error('No hay ningún archivo .md o .csv');
-      const rec = { id: 'imp:' + uuid(), title: '', mainName: main.name, files: {}, importedAt: new Date().toISOString() };
-      for (const f of files) rec.files[f.name] = new Blob([await f.arrayBuffer()], { type: f.type || guessType(f.name) });
-      const proto = await loadProtocolEntry({ kind: 'imported', record: rec });
-      rec.title = proto.title;
-      await db.put('protocols', rec);
-      await db.audit('protocol_imported', { protocol: rec.title, files: files.length });
-      toast(`Importado: ${proto.title}` + (proto.warnings.length ? ` (${proto.warnings.length} avisos)` : ''));
-      await screenProtocols();
-      showPreview({ id: rec.id, kind: 'imported', record: rec, title: rec.title });
+      const { rec, proto } = await importFiles(files);
+      toast(proto.missing.length ? `Importado, pero faltan ${proto.missing.length} archivos` : `Importado: ${proto.title}`, proto.missing.length ? 'err' : '');
+      await screenProtocols(rec.id);
     } catch (err) { toast('Error al importar: ' + err.message, 'err'); }
   });
   $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
@@ -323,19 +407,44 @@ async function screenProtocols() {
     screenProtocols();
   }));
   $$('[data-preview]').forEach((b) => b.addEventListener('click', () => showPreview(list.find((p) => p.id === b.dataset.preview))));
+  if (showId) { const e = list.find((p) => p.id === showId); if (e) showPreview(e); }
 }
+
 function guessType(n) {
-  const ext = n.split('.').pop().toLowerCase();
-  return { svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', md: 'text/markdown', csv: 'text/csv' }[ext] || 'application/octet-stream';
+  const ext = String(n).split('.').pop().toLowerCase();
+  return { svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    md: 'text/markdown', markdown: 'text/markdown', csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain' }[ext] || 'application/octet-stream';
+}
+
+// ZIP del protocolo (plantilla para editar y volver a importar)
+async function protocolZip(entry, proto) {
+  const folder = slugify(proto.title, 40) || 'protocolo';
+  const entries = [];
+  if (entry.kind === 'imported') {
+    for (const [n, v] of Object.entries(entry.record.files)) entries.push({ name: `${folder}/${n}`, data: toBlob(v) });
+  } else {
+    for (const [n, t] of Object.entries(proto.texts)) entries.push({ name: `${folder}/${normPath(n)}`, data: t });
+    for (const img of referencedImages(proto)) {
+      try { const r = await fetch(proto.resolve(img)); if (r.ok) entries.push({ name: `${folder}/${normPath(img)}`, data: await r.blob() }); } catch (_) {}
+    }
+  }
+  return new File([await makeZip(entries)], `${folder}.zip`, { type: 'application/zip' });
 }
 
 async function showPreview(entry) {
   const box = $('#preview');
   try {
     const p = await loadProtocolEntry(entry);
+    const otherWarnings = p.warnings.filter((w) => !w.startsWith('Falta'));
     box.innerHTML = `<section class="panel">
       <h3>${esc(p.title)}</h3>
-      ${p.warnings.map((w) => `<div class="notice warn">${esc(w)}</div>`).join('')}
+      ${p.missing.length ? `<div class="notice warn">
+        <b>Faltan ${p.missing.length} ${p.missing.length === 1 ? 'archivo' : 'archivos'} que usa el protocolo:</b>
+        <div class="missing">${p.missing.map((m) => `<code>${esc(m)}</code>`).join(' ')}</div>
+        ${entry.kind === 'imported' ? `<div class="row gap wrap">${importButtons('add', 'Añadir archivos o .zip')}</div>
+        <small>Se emparejan por nombre: no hace falta respetar las carpetas.</small>` : ''}
+      </div>` : ''}
+      ${otherWarnings.map((w) => `<div class="notice warn">${esc(w)}</div>`).join('')}
       <table class="kv tasks"><tr><th>Tarea</th><th>Grabación</th><th>Slides</th><th>Orden</th></tr>
       ${p.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>${RECORDING_MODES[t.recording]}</td>
         <td>${t.slides.length}${t.repetitions > 1 ? ` × ${t.repetitions}` : ''}</td>
@@ -343,9 +452,25 @@ async function showPreview(entry) {
       </table>
       <div class="thumbs">${p.tasks.flatMap((t) => t.slides.slice(0, 4).map((s) =>
         `<div class="thumb"><div class="thumb-in">${renderMarkdown(s.md, p.resolve)}</div><span>${esc(t.name)} · ${esc(s.id)}</span></div>`)).join('')}</div>
-      <button class="btn primary" id="pv-start">Nueva sesión con este protocolo</button>
+      <div class="row gap wrap">
+        <button class="btn primary" id="pv-start" ${p.tasks.length ? '' : 'disabled'}>Nueva sesión con este protocolo</button>
+        <button class="btn" id="pv-zip">Descargar .zip</button>
+      </div>
     </section>`;
     $('#pv-start').addEventListener('click', () => go('setup', entry.id));
+    const zipBtn = $('#pv-zip');
+    zipBtn.addEventListener('click', async () => {
+      zipBtn.disabled = true;
+      try { const f = await protocolZip(entry, p); downloadBlob(f, f.name); } catch (err) { toast(err.message, 'err'); }
+      zipBtn.disabled = false;
+    });
+    bindImport('add', async (files) => {
+      try {
+        const { rec, proto } = await importFiles(files, entry.record);
+        toast(proto.missing.length ? `Siguen faltando ${proto.missing.length} archivos` : 'Protocolo completo', proto.missing.length ? 'err' : '');
+        await screenProtocols(rec.id);
+      } catch (err) { toast('Error al añadir: ' + err.message, 'err'); }
+    });
     box.scrollIntoView({ behavior: 'smooth' });
   } catch (err) { box.innerHTML = `<div class="notice warn">No se pudo leer el protocolo: ${esc(err.message)}</div>`; }
 }
@@ -520,9 +645,8 @@ function outRate(nativeRate) { return settings.sampleRate === 'native' ? nativeR
 async function saveWav(session, res, name, meta = {}) {
   const rate = outRate(res.sampleRate);
   const enc = await engine.encode(res.samples, res.sampleRate, rate, settings.bitDepth, meta.slices);
-  const blob = new Blob([enc.full], { type: 'audio/wav' });
   const rec = {
-    id: uuid(), sessionId: session.id, name, kind: 'wav', blob, size: blob.size,
+    id: uuid(), sessionId: session.id, name, kind: 'wav', type: 'audio/wav', data: enc.full, size: enc.full.byteLength,
     createdAt: new Date().toISOString(), task: meta.task || '', durationS: enc.length / enc.outRate,
     sampleRate: enc.outRate, nativeRate: res.sampleRate, bitDepth: settings.bitDepth, clipped: !!res.clipped,
   };
@@ -530,8 +654,8 @@ async function saveWav(session, res, name, meta = {}) {
   const sliceRecs = [];
   if (meta.sliceNames) {
     for (let i = 0; i < enc.slices.length; i++) {
-      const b = new Blob([enc.slices[i]], { type: 'audio/wav' });
-      const r = { id: uuid(), sessionId: session.id, name: meta.sliceNames[i], kind: 'wav', blob: b, size: b.size,
+      const buf = enc.slices[i];
+      const r = { id: uuid(), sessionId: session.id, name: meta.sliceNames[i], kind: 'wav', type: 'audio/wav', data: buf, size: buf.byteLength,
         createdAt: rec.createdAt, task: meta.task, sampleRate: enc.outRate, bitDepth: settings.bitDepth, cutFrom: name };
       await db.put('files', r);
       sliceRecs.push(r);
@@ -541,8 +665,8 @@ async function saveWav(session, res, name, meta = {}) {
 }
 
 async function saveText(session, name, text, task) {
-  const blob = new Blob([text], { type: 'text/plain' });
-  await db.put('files', { id: uuid(), sessionId: session.id, name, kind: 'text', blob, size: blob.size, createdAt: new Date().toISOString(), task });
+  const data = new TextEncoder().encode(text).buffer;
+  await db.put('files', { id: uuid(), sessionId: session.id, name, kind: 'text', type: 'text/plain', data, size: data.byteLength, createdAt: new Date().toISOString(), task });
 }
 
 // ---------- EJECUCIÓN DE LA SESIÓN ----------
@@ -948,7 +1072,7 @@ async function screenSessions() {
 async function screenAudit() {
   const rows = (await db.all('audit')).reverse();
   const lbl = { session_created: 'Sesión creada', session_completed: 'Sesión completada', session_ended_early: 'Sesión terminada antes de tiempo',
-    export_prepared: 'Exportación preparada', export_shared: 'Exportación compartida', export_downloaded: 'Exportación descargada',
+    protocol_updated: 'Protocolo actualizado', export_prepared: 'Exportación preparada', export_shared: 'Exportación compartida', export_downloaded: 'Exportación descargada',
     session_deleted: 'Sesión borrada', consent_declined: 'Consentimiento rechazado', protocol_imported: 'Protocolo importado', protocol_deleted: 'Protocolo borrado' };
   setScreen(`<div class="page">${backBar('Registro de actividad', `<button class="btn" id="a-csv">Exportar CSV</button>`)}
     <section class="panel"><table class="kv log">${rows.map((r) => `<tr><td class="muted">${fmtDate(r.time)}</td><td>${esc(lbl[r.action] || r.action)}</td><td>${esc(r.participant || r.protocol || '')}</td></tr>`).join('') || '<tr><td class="muted">Sin actividad.</td></tr>'}</table></section></div>`, 'scroll');
@@ -969,7 +1093,7 @@ function trialsCSV(s) {
 
 function sessionJSON(s, files) {
   const { protocolTexts, persisted, ...rest } = s;
-  return { ...rest, files: files.map(({ blob, sessionId, ...f }) => f) };
+  return { ...rest, files: files.map(({ blob, data, sessionId, ...f }) => f) };
 }
 
 const LEEME = (s) => `Exportación de Fieldrec ${APP_VERSION}
@@ -990,7 +1114,7 @@ async function prepareExport(sessionId, slot) {
     const files = await db.filesForSession(sessionId);
     files.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name));
     const F = s.folderName;
-    const entries = files.map((f) => ({ name: `${F}/audio/${f.name}`, data: f.blob }));
+    const entries = files.map((f) => ({ name: `${F}/audio/${f.name}`, data: f.data || f.blob }));
     entries.push({ name: `${F}/session.json`, data: JSON.stringify(sessionJSON(s, files), null, 2) });
     entries.push({ name: `${F}/trials.csv`, data: trialsCSV(s) });
     for (const [n, t] of Object.entries(s.protocolTexts || {})) entries.push({ name: `${F}/protocolo/${n.split('/').pop()}`, data: t });

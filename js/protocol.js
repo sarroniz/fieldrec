@@ -151,7 +151,7 @@ export async function parseProtocol(source) {
   const warnings = [];
   const main = source.mainName;
   const text = await source.readText(main);
-  const protocol = { title: '', consent: '', meta: {}, tasks: [], warnings };
+  const protocol = { title: '', consent: '', meta: {}, tasks: [], warnings, missing: [] };
 
   if (/\.(csv|tsv|txt)$/i.test(main) && !/\.md$/i.test(main)) {
     const rows = parseCSV(text);
@@ -210,7 +210,8 @@ export async function parseProtocol(source) {
       const rows = parseCSV(await source.readText(t.items));
       for (const row of rows) { const s = rowToSlide(row, t.carrier); if (s.md) t.slides.push(s); }
     } catch (e) {
-      warnings.push(`No se pudo leer «${t.items}» (tarea ${t.title}).`);
+      protocol.missing.push(t.items);
+      warnings.push(`Falta «${t.items}», la lista de ítems de la tarea «${t.title}».`);
     }
   }
 
@@ -218,17 +219,30 @@ export async function parseProtocol(source) {
   const consent = protocol.meta.consent || '';
   if (/\.(md|txt)$/i.test(consent)) {
     try { protocol.consent = await source.readText(consent); }
-    catch (e) { warnings.push(`No se encontró el archivo de consentimiento «${consent}».`); }
+    catch (e) { protocol.missing.push(consent); warnings.push(`Falta «${consent}», el texto de consentimiento.`); }
   } else protocol.consent = consent;
 
   // Identificadores por defecto
   for (const t of protocol.tasks) {
     t.slides.forEach((s, i) => { if (!s.id) s.id = `s${String(i + 1).padStart(2, '0')}`; });
-    if (!t.slides.length) warnings.push(`La tarea «${t.title}» no tiene slides.`);
+    if (!t.slides.length && !protocol.missing.includes(t.items)) warnings.push(`La tarea «${t.title}» no tiene slides.`);
   }
   protocol.tasks = protocol.tasks.filter((t) => t.slides.length);
   if (!protocol.tasks.length) warnings.push('El protocolo no contiene ninguna tarea con slides.');
   return protocol;
+}
+
+// Imágenes locales que usa el protocolo (para comprobar que se han importado y para exportarlo)
+export function referencedImages(protocol) {
+  const set = new Set();
+  const scan = (md) => {
+    for (const m of String(md || '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+      if (!/^(https?:|data:|blob:)/i.test(m[1])) set.add(m[1]);
+    }
+  };
+  protocol.tasks.forEach((t) => t.slides.forEach((s) => scan(s.md)));
+  scan(protocol.consent);
+  return [...set];
 }
 
 // ---------- Aleatorización reproducible ----------

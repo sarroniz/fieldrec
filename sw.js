@@ -1,10 +1,10 @@
 // Service worker: guarda la app y los protocolos incluidos para usarla sin conexión.
 // Estrategia: responde desde la caché y actualiza en segundo plano (la versión nueva se ve al volver a abrir).
-const CACHE = 'fieldrec-v0.1.0';
+const CACHE = 'fieldrec-v0.1.1';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/audio.js', 'js/recorder-worklet.js', 'js/wav-worker.js', 'js/dsp.js',
-  'js/protocol.js', 'js/db.js', 'js/zip.js', 'js/textgrid.js',
+  'js/protocol.js', 'js/db.js', 'js/zip.js', 'js/unzip.js', 'js/textgrid.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'protocols/index.json',
   'protocols/ejemplo/protocolo.md', 'protocols/ejemplo/palabras.csv', 'protocols/ejemplo/consentimiento.md',
