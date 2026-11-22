@@ -11,7 +11,7 @@ A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitatio
 - **PowerPoint and PDF import:** slides from a `.pptx` are reproduced in the browser (navigation buttons hidden, images optimized); a PDF gives a pixel-exact copy.
 - **Built-in Guide** (home screen → Guide): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
 
-> **Prototype (v0.4.0).** Test it on your own iPad before using it with participants.
+> **Prototype (v0.4.1).** Test it on your own iPad before using it with participants.
 
 ---
 
@@ -29,7 +29,7 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 2. **Share → Add to Home Screen**.
 3. Always open it from that icon. The first time, it asks for microphone access.
 
-**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.2`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
 
 ---
 
@@ -211,7 +211,7 @@ Recordings exist **only on the device**, in the browser's storage for this websi
 - Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
 - Deleting a session requires confirming that the export has been saved, and every deletion is logged.
 
-## Known limitations (v0.4.0)
+## Known limitations (v0.4.1)
 
 - Mono only.
 - A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.

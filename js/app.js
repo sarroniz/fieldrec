@@ -7,7 +7,7 @@ import { makeTextGrid } from './textgrid.js';
 import { guideHTML } from './guide.js';
 import { openEditor } from './editor.js';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;            // session in progress

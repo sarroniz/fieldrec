@@ -1,6 +1,6 @@
 // Service worker: caches the app and the bundled protocols so it works offline.
 // vendor/pdfjs (PDF import) is cached the first time it is used.
-const CACHE = 'fieldrec-v0.4.0';
+const CACHE = 'fieldrec-v0.4.1';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/guide.js', 'js/editor.js', 'js/pptx.js', 'js/pdf-import.js', 'js/audio.js', 'js/recorder-worklet.js', 'js/wav-worker.js', 'js/dsp.js',

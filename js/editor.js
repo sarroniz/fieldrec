@@ -125,14 +125,84 @@ async function loadFrom(entry) {
       slides: t.slides.map((s) => ({ ...s, kind: s.kind || 'md', uid: uid() })),
     })),
   };
-  for (const p of referencedImages(proto)) {
-    const u = proto.resolve(p);
-    if (!u || u.startsWith('data:')) continue;
-    try {
-      const r = await fetch(u);
-      if (r.ok) { const b = await r.blob(); assets.set(A.normPath(p), { type: b.type || A.guessType(p), data: await b.arrayBuffer() }); }
-    } catch (_) {}
+  if (entry.kind === 'imported') {
+    // Copy the stored files directly (they are already { type, data: ArrayBuffer } after loadProtocolEntry)
+    for (const [n, v] of Object.entries(entry.record.files || {})) {
+      if (/\.(json|md|markdown|csv|tsv|txt)$/i.test(n)) continue;
+      const data = v instanceof Blob ? await v.arrayBuffer() : v && v.data;
+      if (data) assets.set(A.normPath(n), { type: (v && v.type) || A.guessType(n), data });
+    }
+  } else {
+    for (const p of referencedImages(proto)) {
+      const u = proto.resolve(p);
+      if (!u || /^(data|blob):/.test(u)) continue;
+      try {
+        const r = await fetch(u);
+        if (r.ok) { const b = await r.blob(); assets.set(A.normPath(p), { type: b.type || A.guessType(p), data: await b.arrayBuffer() }); }
+      } catch (_) {}
+    }
   }
+}
+
+// ---------- missing pictures ----------
+function findAsset(p) {
+  const key = A.normPath(p);
+  return assets.get(key) || [...assets.entries()].find(([k]) => k.split('/').pop().toLowerCase() === key.split('/').pop().toLowerCase())?.[1] || null;
+}
+function missingPaths() {
+  const proto = { consent: draft.consent, tasks: draft.tasks.map((t) => ({ slides: t.slides })) };
+  return referencedImages(proto).map((p) => A.normPath(p)).filter((p) => !findAsset(p));
+}
+// Puts back missing pictures from the original .pptx (its ppt/media files) or from picture files, matching by file name.
+async function restorePictures(files) {
+  const { openZip } = await import('./unzip.js');
+  const { optimizeImage, mimeFor } = await import('./pptx.js');
+  let missing = missingPaths();
+  const stem = (n) => n.split('/').pop().toLowerCase().replace(/\.[^.]+$/, '');
+  let restored = 0;
+  for (const f of files) {
+    const candidates = [];
+    if (/\.pptx$/i.test(f.name)) {
+      progress(`Reading ${f.name}…`, 0);
+      const zip = await openZip(f);
+      // prefer the folder this presentation was imported into (media/<file name>…)
+      const folder = `media/${slugify(f.name.replace(/\.[^.]+$/, ''), 24)}`;
+      const scoped = missing.filter((p) => p.startsWith(folder + '/') || p.startsWith(folder + '_'));
+      const pool = scoped.length ? scoped : missing;
+      for (const e of zip.entries) if (e.name.startsWith('ppt/media/')) candidates.push({ name: e.name, pool, get: async () => new Blob([await e.read()], { type: mimeFor(e.name) }) });
+    } else {
+      candidates.push({ name: f.name, pool: missing, get: async () => f });
+    }
+    let i = 0;
+    for (const c of candidates) {
+      const targets = c.pool.filter((p) => stem(p) === stem(c.name) && !findAsset(p));
+      i++;
+      if (!targets.length) continue;
+      progress(`Restoring pictures… ${restored + 1}`, i / candidates.length);
+      const out = await optimizeImage(await c.get(), 1000);
+      const data = await out.arrayBuffer();
+      for (const p of targets) { assets.set(p, { type: out.type || A.guessType(p), data }); restored++; }
+    }
+    missing = missingPaths();
+  }
+  closeProgress();
+  resetUrls();
+  if (restored) markDirty();
+  render();
+  const left = missingPaths().length;
+  A.toast(restored ? `Restored ${restored} pictures${left ? ` · ${left} still missing` : ''}. Tap Save to keep them.` : 'No matching pictures found in that file', restored ? '' : 'err');
+}
+function pickRestore() {
+  const input = document.getElementById('ed-file');
+  input.value = '';
+  input.multiple = true;
+  input.accept = '.pptx,image/*,.png,.jpg,.jpeg,.gif,.webp,.svg';
+  input.onchange = async () => {
+    const files = [...input.files];
+    if (!files.length) return;
+    try { await restorePictures(files); } catch (err) { closeProgress(); A.modal({ title: 'Couldn’t restore the pictures', body: `<p>${esc(err.message)}</p>`, cancel: '', ok: 'OK' }); }
+  };
+  input.click();
 }
 
 // ---------- rendering ----------
@@ -143,6 +213,9 @@ function render(top = false) {
   A.app.innerHTML = `<div class="page editor">
     <header class="topbar"><button class="btn ghost back" id="ed-back">‹ Protocols</button><h2>Protocol editor</h2>
       <div class="tb-right"><span class="muted small" id="ed-dirty">${dirty ? 'Unsaved changes' : ''}</span><button class="btn primary" data-a="save">Save</button></div></header>
+    ${(() => { const n = missingPaths().length; return n ? `<div class="notice warn"><b>${n} ${n === 1 ? 'picture used by these slides is' : 'pictures used by these slides are'} missing.</b>
+      An earlier version of Fieldrec could lose pictures when an edited protocol was saved. If they came from a PowerPoint, choose that same .pptx file to put them back: your tasks and slide order stay as they are. You can also choose the picture files.
+      <div class="row gap wrap" style="margin-top:10px"><button class="btn primary" data-a="restore">Restore from PowerPoint or pictures</button></div></div>` : ''; })()}
     ${sourceFormat === 'markdown' && recId ? '<div class="notice">This protocol was imported from a Markdown file. Saving it here converts it to the editor’s format; the original file isn’t changed.</div>' : ''}
     <section class="panel">
       <h3><span class="stepnum">1</span> About this protocol</h3>
@@ -269,6 +342,7 @@ function bind() {
     if (b.tagName === 'A') e.preventDefault();
     switch (a) {
       case 'save': return save();
+      case 'restore': return pickRestore();
       case 'save-run': { const id = await save(); if (id) A.go('setup', id); return; }
       case 'zip': return downloadZip();
       case 'consent-tpl': {
@@ -666,7 +740,23 @@ async function save() {
   const json = buildJson();
   if (!json.tasks.length) { A.toast('Add at least one task with slides before saving', 'err'); return null; }
   const empty = draft.tasks.filter((t) => !t.slides.length).length;
-  const files = { 'protocol.json': { type: 'application/json', data: new TextEncoder().encode(JSON.stringify(json, null, 1)).buffer }, ...usedAssets(json) };
+  const media = usedAssets(json);
+  // Safety net: anything referenced but not in memory is taken from the version already saved
+  const wanted = new Set(referencedImages({ consent: json.consent, tasks: json.tasks }).map((p) => A.normPath(p)));
+  const lacking = [...wanted].filter((p) => !media[p]);
+  if (lacking.length && recId) {
+    try {
+      const old = await A.db.get('protocols', recId);
+      if (old) for (const p of lacking) {
+        const v = old.files[p] || Object.entries(old.files).find(([k]) => k.split('/').pop().toLowerCase() === p.split('/').pop().toLowerCase())?.[1];
+        const data = v instanceof Blob ? await v.arrayBuffer() : v && v.data;
+        if (data) { media[p] = { type: (v && v.type) || A.guessType(p), data }; assets.set(p, media[p]); }
+      }
+    } catch (_) {}
+  }
+  const stillMissing = [...wanted].filter((p) => !media[p]).length;
+  if (stillMissing && !(await A.modal({ title: `${stillMissing} pictures are missing`, body: '<p>Those slides will show an empty frame. You can restore the pictures first (see the warning at the top of the editor) or save anyway.</p>', ok: 'Save anyway', cancel: 'Cancel' }))) return null;
+  const files = { 'protocol.json': { type: 'application/json', data: new TextEncoder().encode(JSON.stringify(json, null, 1)).buffer }, ...media };
   const now = new Date().toISOString();
   const rec = { id: recId || 'imp:' + A.uuid(), title: json.title, mainName: 'protocol.json', files, importedAt: recCreated || now, updatedAt: now, editor: true };
   try {
@@ -678,6 +768,7 @@ async function save() {
   await A.db.audit(recId ? 'protocol_updated' : 'protocol_created', { protocol: json.title, files: Object.keys(files).length });
   recId = rec.id; recCreated = rec.importedAt; sourceFormat = 'json';
   dirty = false;
+  render();
   const d = document.getElementById('ed-dirty'); if (d) d.textContent = 'Saved';
   A.toast(empty ? `Saved (${empty} empty ${empty === 1 ? 'task was' : 'tasks were'} left out)` : 'Protocol saved');
   return rec.id;
