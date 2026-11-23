@@ -158,10 +158,10 @@ export function guideHTML({ version, storageLine, standalone }) {
     <ol class="steps">
       <li><b>Install it.</b> Open the app’s address in <b>Safari</b>, tap <b>Share → Add to Home Screen</b>, and from then on always open it from that icon.
         ${standalone ? '<span class="pill ok">You are using the Home Screen app ✓</span>' : '<span class="pill warn">You are in a browser tab right now</span>'}</li>
-      <li><b>Check the microphone.</b> Go to <b>Microphone</b>, tap <b>Turn on microphone</b>, allow access, and check the settings the device accepted. Record a 5-second test and listen to it.</li>
-      <li><b>Try the example.</b> <b>New session</b> → choose <i>Example protocol (Spanish)</i> → participant code (e.g. ${code('TEST01')}) → consent → run through the tasks.</li>
-      <li><b>Export.</b> At the end, tap <b>Export now → Share / Save to Files</b> (or AirDrop it to your computer). Open the ZIP and check the WAV files and the TextGrid in Praat.</li>
-      <li><b>Make your own protocol.</b> Go to <b>Protocols → New protocol</b> to build one step by step, or <b>From PowerPoint or PDF</b> to start from a presentation. You don’t need to write any files: see <a href="#g-editor" data-jump>Create a protocol</a>.</li>
+      <li><b>Check the microphone.</b> On the home screen, step 1 shows the microphone with a live level meter (tap <b>Turn on</b> and allow access the first time). <b>Change</b> lets you choose the input, sample rate and bit depth, see what the device accepted, and record a 5-second test.</li>
+      <li><b>Try the example.</b> Step 2 on the home screen shows the protocol for new sessions (<i>Example protocol (Spanish)</i> at first; <b>Change</b> picks another). Tap <b>Start session</b> → participant code (e.g. ${code('TEST01')}) → consent → run through the tasks.</li>
+      <li><b>Export.</b> At the end, tap <b>Export now → Share / Save to Files</b> (or AirDrop it to your computer). Sessions not yet exported have an <b>Export</b> button in the table on the home screen. Open the ZIP and check the WAV files and the TextGrid in Praat.</li>
+      <li><b>Make your own protocol.</b> Open <b>Menu → Protocol → New protocol</b> to build one step by step, or <b>From PowerPoint or PDF</b> to start from a presentation. You don’t need to write any files: see <a href="#g-editor" data-jump>Create a protocol</a>.</li>
     </ol>
   </details>
 
@@ -175,11 +175,11 @@ export function guideHTML({ version, storageLine, standalone }) {
         <ul>
           <li><b>Deleting the Home Screen icon deletes all its data.</b></li>
           <li>The Safari tab and the Home Screen app <b>don’t share storage</b>: sessions and protocols created in one don’t appear in the other.</li>
-          <li>If the iPad runs very low on storage, the system can <b>evict website data</b>. Keep free space and watch the usage shown at the bottom of the home screen.</li>
+          <li>If the iPad runs very low on storage, the system can <b>evict website data</b>. Keep free space and watch the usage shown in <b>Menu → Storage</b>.</li>
           <li>Clearing website data in Settings (<i>Safari → Clear History and Website Data</i>) can remove it.</li>
         </ul></li>
       <li><b>Private browsing</b> keeps nothing: everything is lost when the tab closes.</li>
-      <li><b>“Persistent storage”</b> (bottom of the home screen) means the browser agreed to protect the data from automatic eviction. Safari often says no, and even “yes” is not a substitute for exporting.</li>
+      <li><b>“Persistent storage”</b> (<b>Menu → Storage</b>) means the browser agreed to protect the data from automatic eviction. Safari often says no, and even “yes” is not a substitute for exporting.</li>
     </ul>
     <h4>Data can also be lost while recording</h4>
     <ul>
@@ -191,7 +191,7 @@ export function guideHTML({ version, storageLine, standalone }) {
     <ul class="checks">
       <li>Export after <b>every</b> session, before starting the next participant.</li>
       <li>Open the ZIP on a computer and check it before deleting the session from the iPad.</li>
-      <li>Keep a copy of your protocols too: <b>Protocols → View → Download .zip</b>.</li>
+      <li>Keep a copy of your protocols too: <b>Menu → Protocol → View, edit and import protocols → View → Download .zip</b>.</li>
       <li>Turn on <b>Airplane mode</b> or a <b>Focus</b> mode during sessions to avoid calls and notifications.</li>
       <li>Keep a passcode on the iPad (it encrypts the stored data).</li>
     </ul>
@@ -201,10 +201,10 @@ export function guideHTML({ version, storageLine, standalone }) {
     <summary>Create a protocol in the app (step by step)</summary>
     <p>A <b>protocol</b> is everything a session needs: a consent text and a list of <b>tasks</b>. Each task is a group of <b>slides</b> recorded the same way: a word list, a reading passage, a set of pictures to name… Participants go through the tasks in order.</p>
     <ol class="steps">
-      <li><b>Open the editor.</b> Go to <b>Protocols → New protocol</b>. (To change an existing protocol, open it with <b>View</b> and tap <b>Edit</b>.)</li>
+      <li><b>Open the editor.</b> Open <b>Menu → Protocol → New protocol</b>. (To change an existing protocol, go to <b>View, edit and import protocols</b>, open it with <b>View</b> and tap <b>Edit</b>.)</li>
       <li><b>Fill in “About this protocol”.</b>
         <ul>
-          <li><b>Title:</b> the name you’ll see in New session.</li>
+          <li><b>Title:</b> the name you’ll see in step 2 of the home screen.</li>
           <li><b>Language shown to participants:</b> English or Español. It changes the consent checkboxes, “Task 1 of 3” and the break and thank-you screens. Everything else stays in English.</li>
           <li><b>Consent text:</b> paste the text approved by your IRB. <i>Insert a template</i> gives you a starting point to replace.</li>
         </ul></li>
@@ -233,8 +233,8 @@ export function guideHTML({ version, storageLine, standalone }) {
       <li><b>Optional settings for each task:</b> an <b>instructions screen</b> shown before the task starts (nothing is recorded on it), how many <b>repetitions</b> of each slide, and the <b>slide order</b> (fixed, random, or fully random across repetitions). The random order changes for every participant and is saved with each session.</li>
       <li><b>Organize the slides.</b> Tap a slide to edit it. Use <b>‹ ›</b> to move it earlier or later, and <b>✕</b> to delete it. To move several slides to another task, tap the circle in their corner to select them, then use <b>Move to</b> in the bar at the bottom of the screen. Choose “New task…” there to create the task as you move them.</li>
       <li><b>Check the item IDs.</b> Each slide has a short ID (shown under it) that goes into the file names, for example ${code('P01_s1_word_list_03_cada.wav')}. Change it with <b>Edit</b> if you want clearer names.</li>
-      <li><b>Save.</b> The protocol now appears in <b>New session</b>. <b>Save and start a session</b> takes you straight there.</li>
-      <li><b>Back it up or share it.</b> <b>Download .zip</b> saves a file you can keep, or import on another iPad with <b>Protocols → Import files or .zip</b>.</li>
+      <li><b>Save.</b> The protocol now appears in <b>Menu → Protocol</b>, where you choose it for new sessions. <b>Save and start a session</b> chooses it and takes you straight there.</li>
+      <li><b>Back it up or share it.</b> <b>Download .zip</b> saves a file you can keep, or import on another iPad with <b>View, edit and import protocols → Import files or .zip</b>.</li>
     </ol>
     <h4>Tips</h4>
     <ul>
@@ -248,17 +248,17 @@ export function guideHTML({ version, storageLine, standalone }) {
 
   <details class="guide" id="g-pptx">
     <summary>Use a PowerPoint presentation</summary>
-    <p>If you already have your stimuli in PowerPoint, Fieldrec can use the slides directly.</p>
+    <p>If you already have your stimuli in PowerPoint, FieldRec can use the slides directly.</p>
     <ol class="steps">
       <li><b>Prepare the presentation</b> (optional, but it saves time later):
         <ul>
           <li>One slide per item, in the order you want.</li>
-          <li>Group the slides with PowerPoint <b>sections</b> (<i>Home → Section → Add Section</i>), one section per task, such as “Introduction”, “Practice” and “Test”. Fieldrec offers to turn each section into a task.</li>
-          <li>To control the file names, put an item code in each slide’s <b>footer</b> (<i>Insert → Header &amp; Footer → Footer</i>). If the footers identify the slides (44, 41, 50…), Fieldrec uses them as item IDs.</li>
-          <li>Navigation buttons like “next” can stay: they’re hidden automatically, because Fieldrec has its own Next button.</li>
+          <li>Group the slides with PowerPoint <b>sections</b> (<i>Home → Section → Add Section</i>), one section per task, such as “Introduction”, “Practice” and “Test”. FieldRec offers to turn each section into a task.</li>
+          <li>To control the file names, put an item code in each slide’s <b>footer</b> (<i>Insert → Header &amp; Footer → Footer</i>). If the footers identify the slides (44, 41, 50…), FieldRec uses them as item IDs.</li>
+          <li>Navigation buttons like “next” can stay: they’re hidden automatically, because FieldRec has its own Next button.</li>
         </ul></li>
       <li><b>Get the file onto the iPad:</b> AirDrop, iCloud Drive, OneDrive, Google Drive or email. Anything that puts the ${code('.pptx')} in the Files app works.</li>
-      <li><b>Import it.</b> <b>Protocols → From PowerPoint or PDF</b> and choose the file. Fieldrec reads every slide, reproduces it (text, tables, pictures and shapes in place), hides navigation buttons and slides hidden in PowerPoint, and shrinks heavy images to the size they’re shown at. A large presentation can take a minute.</li>
+      <li><b>Import it.</b> <b>Menu → Protocol → From PowerPoint or PDF</b> and choose the file. FieldRec reads every slide, reproduces it (text, tables, pictures and shapes in place), hides navigation buttons and slides hidden in PowerPoint, and shrinks heavy images to the size they’re shown at. A large presentation can take a minute.</li>
       <li><b>Split the slides into tasks.</b> All slides arrive in one task, unless you chose to use the sections. Select the slides of each part and use <b>Move to → New task…</b>, choosing the right type (for example: introduction = Information only; practice and test = Each slide separately).</li>
       <li><b>Check, save and test-run it</b> as in <a href="#g-editor" data-jump>Create a protocol</a>.</li>
     </ol>
@@ -302,7 +302,7 @@ export function guideHTML({ version, storageLine, standalone }) {
   img/
     sun.png
     house.png</pre>
-    <p>In the Files app or Finder, compress the folder (<i>long-press or right-click → Compress</i>) and import the ${code('.zip')} with <b>Protocols → Import files or .zip</b>. Fieldrec lists any file the protocol uses but can’t find.</p>
+    <p>In the Files app or Finder, compress the folder (<i>long-press or right-click → Compress</i>) and import the ${code('.zip')} with <b>Menu → Protocol → View, edit and import protocols → Import files or .zip</b>. FieldRec lists any file the protocol uses but can’t find.</p>
     <h4>Templates for each type of task</h4>
     <p>Copy the ones you need and paste them under the protocol header.</p>
     ${snippet('Word list from a CSV file', MD_TASKS.words)}
@@ -318,7 +318,7 @@ export function guideHTML({ version, storageLine, standalone }) {
     <table class="kv">
       <tr><th>Key</th><th>Values</th></tr>
       <tr><td>${code('title')}</td><td>Protocol title.</td></tr>
-      <tr><td>${code('language')}</td><td>${code('en')} (default) or ${code('es')}: language of the texts Fieldrec shows the participant.</td></tr>
+      <tr><td>${code('language')}</td><td>${code('en')} (default) or ${code('es')}: language of the texts FieldRec shows the participant.</td></tr>
       <tr><td>${code('consent')}</td><td>Consent as literal text, or the name of a ${code('.md')} file.</td></tr>
       <tr><td>${code('task')}</td><td>Short name used in file names (${code('word_list')}).</td></tr>
       <tr><td>${code('label')}</td><td>Name shown to the participant.</td></tr>
@@ -342,7 +342,7 @@ export function guideHTML({ version, storageLine, standalone }) {
 
   <details class="guide" id="g-session">
     <summary>Running a session</summary>
-    <p><b>Flow:</b> New session (protocol, participant code, audio settings) → consent → for each task: instructions screen (if any) → slides → break screen → next task → end screen with <b>Export now</b>.</p>
+    <p><b>Flow:</b> Start session (participant code; the protocol and audio settings come from steps 1 and 2 of the home screen) → consent → for each task: instructions screen (if any) → slides → break screen → next task → end screen with <b>Export now</b>.</p>
     <table class="kv">
       <tr><th>Recording</th><th>What happens</th></tr>
       <tr><td><b>Each slide separately</b></td><td>A red record button on every slide. Tap to start, tap to stop; the take is saved immediately. Recording again on the same slide saves a new take (${code('_t2')}, ${code('_t3')}…).</td></tr>
@@ -354,8 +354,9 @@ export function guideHTML({ version, storageLine, standalone }) {
     <h4>Controls</h4>
     <ul>
       <li><b>Next</b> while a take is recording stops it, saves it and moves on.</li>
-      <li>The <b>☰</b> menu: skip to the end of the task, reopen the microphone (e.g. after plugging in an external mic), or end the session. Anything being recorded is saved.</li>
-      <li>Top bar: red dot and timer while recording; the level meter turns <b>red when the signal clips</b>.</li>
+      <li>The screen shows only the slide, the count (3 / 18) and three buttons: previous, record and next. The thin line at the very bottom is the input level: it turns <b>red when the signal clips</b>.</li>
+      <li><b>End</b> (top left): skip to the end of the task, reopen the microphone (e.g. after plugging in an external mic), or end the session. Anything being recorded is saved.</li>
+      <li>Continuous tasks show a red dot and a timer next to the count while recording.</li>
       <li><b>Bluetooth keyboard or presentation remote:</b> → / Page Down = next, ← / Page Up = previous, Space = record/stop, Esc = menu.</li>
     </ul>
   </details>
@@ -366,12 +367,12 @@ export function guideHTML({ version, storageLine, standalone }) {
       <tr><th>Use</th><th>Extensions</th></tr>
       <tr><td>Presentations</td><td>${code('.pptx')} (PowerPoint 2007 or later) · ${code('.pdf')}</td></tr>
       <tr><td>Pictures</td><td>${code('.png')} ${code('.jpg')} ${code('.jpeg')} ${code('.gif')} ${code('.webp')} ${code('.svg')}</td></tr>
-      <tr><td>Protocol files</td><td>${code('.zip')} downloaded from Fieldrec (${code('protocol.json')} inside) · ${code('.md')} ${code('.markdown')} · ${code('.csv')} ${code('.tsv')} ${code('.txt')}</td></tr>
+      <tr><td>Protocol files</td><td>${code('.zip')} downloaded from FieldRec (${code('protocol.json')} inside) · ${code('.md')} ${code('.markdown')} · ${code('.csv')} ${code('.tsv')} ${code('.txt')}</td></tr>
       <tr><td>Consent text</td><td>Typed in the editor, or a ${code('.md')} / ${code('.txt')} file in Markdown protocols</td></tr>
       <tr><td>Not supported</td><td>${code('.ppt')} (save as .pptx), ${code('.key')} (export to PowerPoint or PDF), ${code('.docx')}, ${code('.odp')}</td></tr>
     </table>
-    <p>Pictures must be inside the protocol. For privacy, Fieldrec blocks anything loaded from other websites, including linked images.</p>
-    <h4>What Fieldrec exports</h4>
+    <p>Pictures must be inside the protocol. For privacy, FieldRec blocks anything loaded from other websites, including linked images.</p>
+    <h4>What FieldRec exports</h4>
     <table class="kv">
       <tr><td>${code('audio/*.wav')}</td><td>Mono WAV: 16-bit or 24-bit PCM, or 32-bit float.</td></tr>
       <tr><td>${code('audio/*.TextGrid')}</td><td>Praat TextGrid for continuous tasks, with ${code('slide')} and ${code('texto')} tiers.</td></tr>
@@ -387,16 +388,16 @@ export function guideHTML({ version, storageLine, standalone }) {
     <ul>
       <li><b>Sample rate.</b> The iPad captures at its hardware rate (usually 48,000 Hz). <i>Native</i> keeps it; 44,100, 22,050 or 16,000 Hz are resampled with a high-quality filter. Choosing a rate above the hardware rate adds no information.</li>
       <li><b>Bit depth.</b> 16-bit is enough for most phonetic work; 24-bit or 32-bit float give more headroom.</li>
-      <li><b>Pre-roll / post-roll.</b> Fieldrec always keeps the last second of audio, so a take can start 250–500 ms before you tap record, and continue for a moment after you stop.</li>
-      <li><b>Voice processing.</b> Fieldrec asks iPadOS to turn off echo cancellation, noise suppression and automatic gain control. Safari doesn’t always comply, so check what was obtained on the <b>Microphone</b> screen. The same information is saved in each session’s ${code('session.json')}.</li>
-      <li><b>External microphones</b> (USB-C or Lightning) work and greatly improve quality. Connect them before turning on the microphone, or use <b>☰ → Reopen microphone</b>.</li>
+      <li><b>Pre-roll / post-roll.</b> FieldRec always keeps the last second of audio, so a take can start 250–500 ms before you tap record, and continue for a moment after you stop.</li>
+      <li><b>Voice processing.</b> FieldRec asks iPadOS to turn off echo cancellation, noise suppression and automatic gain control. Safari doesn’t always comply, so check what was obtained in <b>Menu → Microphone → What the device accepted</b>. The same information is saved in each session’s ${code('session.json')}.</li>
+      <li><b>External microphones and audio interfaces</b> (USB-C or Lightning, class compliant) work and greatly improve quality. Connect them, then choose them in <b>Menu → Microphone → Input</b>. FieldRec records one channel, so plug the microphone into input 1. Some interfaces need more power than the iPad gives (or phantom power for a condenser microphone): use a powered USB-C hub or the interface’s own power supply. During a session, <b>End → Reopen microphone</b> picks up an input connected mid-session.</li>
     </ul>
   </details>
 
   <details class="guide" id="g-privacy">
     <summary>Privacy &amp; IRB notes</summary>
     <ul>
-      <li>Fieldrec is a static website: it sends no data to any server, uses no analytics and loads nothing from other sites (enforced by its Content Security Policy). PowerPoint and PDF files are processed on the iPad itself.</li>
+      <li>FieldRec is a static website: it sends no data to any server, uses no analytics and loads nothing from other sites (enforced by its Content Security Policy). PowerPoint and PDF files are processed on the iPad itself.</li>
       <li>Recordings stay in this device’s local storage, which iPadOS encrypts when a passcode is set.</li>
       <li>Files are named only with the participant code. Never type names.</li>
       <li>Consent records participation, recording and archiving separately, with a timestamp. A verbal consent recording is optional.</li>
@@ -407,17 +408,17 @@ export function guideHTML({ version, storageLine, standalone }) {
   <details class="guide" id="g-trouble">
     <summary>Troubleshooting</summary>
     <ul>
-      <li><b>No microphone access.</b> In iPad Settings, open Safari (<i>Settings → Apps → Safari</i> on recent iPadOS) → <b>Microphone</b> → Ask or Allow. Then reopen Fieldrec.</li>
+      <li><b>No microphone access.</b> In iPad Settings, open Safari (<i>Settings → Apps → Safari</i> on recent iPadOS) → <b>Microphone</b> → Ask or Allow. Then reopen FieldRec.</li>
       <li><b>A protocol included with the app says “protocol.md not found (HTTP 404)”.</b> The repository is missing the hidden file ${code('.nojekyll')}, so GitHub Pages converted the Markdown file into a web page. On GitHub: <i>Add file → Create new file</i>, name it ${code('.nojekyll')}, leave it empty and commit.</li>
-      <li><b>A new version isn’t showing.</b> Reload, or close and reopen the app. The version number is at the bottom of the home screen. GitHub Pages can take about 10 minutes to publish changes.</li>
+      <li><b>A new version isn’t showing.</b> Reload, or close and reopen the app. The version number is at the bottom of the home screen and of the Menu. GitHub Pages can take about 10 minutes to publish changes.</li>
       <li><b>A PowerPoint slide looks different.</b> Export the presentation as PDF and import the PDF instead (see <a href="#g-pptx" data-jump>From PowerPoint</a>).</li>
       <li><b>Importing a large presentation is slow.</b> Big images are being optimized; it can take a minute. Keep the app open.</li>
-      <li><b>Missing images or files after importing a Markdown protocol.</b> Open the protocol in <b>Protocols</b>: it lists what is missing and lets you add it.</li>
+      <li><b>Missing images or files after importing a Markdown protocol.</b> Open the protocol in <b>View, edit and import protocols</b>: it lists what is missing and lets you add it.</li>
       <li><b>Red “audio interrupted” banner.</b> Tap it to resume. The gap is logged in ${code('session.json')}.</li>
       <li><b>“Share” doesn’t appear when exporting.</b> Use <b>Download ZIP</b>; it goes to the Downloads folder in Files.</li>
-      <li><b>Recording sounds processed or quiet.</b> Check the Microphone screen for voice processing, try an external microphone, and watch the level meter for clipping.</li>
+      <li><b>Recording sounds processed or quiet.</b> Check <b>Menu → Microphone</b> for voice processing, try an external microphone, and watch the level meter for clipping.</li>
     </ul>
   </details>
 
-  <p class="foot">Fieldrec v${version} · ${storageLine}</p>`;
+  <p class="foot">FieldRec v${version} · ${storageLine}</p>`;
 }

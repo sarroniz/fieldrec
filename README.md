@@ -1,4 +1,4 @@
-# Fieldrec
+# FieldRec
 
 A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitation protocol and records uncompressed WAV audio. Designed for iPad mini in portrait and landscape, hosted on GitHub Pages, and usable offline once added to the Home Screen.
 
@@ -9,9 +9,12 @@ A web app for linguistic fieldwork. It shows the tasks (slides) of an elicitatio
 - **Protocol editor in the app:** build protocols step by step (task types, text, pictures, word lists) without writing any files.
 - **Questions without audio:** short text, long text, number, single choice and multiple choice (optionally with “Other” and required), for background questionnaires. Answers are exported in `responses.csv`.
 - **PowerPoint and PDF import:** slides from a `.pptx` are reproduced in the browser (navigation buttons hidden, images optimized); a PDF gives a pixel-exact copy.
-- **Built-in Guide** (home screen → Guide): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
+- **Simple home screen:** three steps (microphone with a live level meter, protocol, start session) and a table of saved sessions with export status. The protocol and the audio settings are chosen once in the **Menu** and kept for every session.
+- **Distraction-free recording screen:** only the stimulus, the count and three buttons (previous, record, next); the input level is a thin line along the bottom edge that turns red on clipping.
+- **External microphones and USB audio interfaces** can be chosen as input (Menu → Microphone).
+- **Built-in Guide** (Guide button on the home screen): getting started, the editor, PowerPoint, Markdown for beginners, data safety and troubleshooting.
 
-> **Prototype (v0.4.2).** Test it on your own iPad before using it with participants.
+> **Prototype (v0.5.0).** Test it on your own iPad before using it with participants.
 
 ---
 
@@ -30,7 +33,7 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 2. **Share → Add to Home Screen**.
 3. Always open it from that icon. The first time, it asks for microphone access.
 
-**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.4.3`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen.
+**Publishing updates:** upload the new files and change `CACHE` in `sw.js` (e.g. `fieldrec-v0.5.1`). When online, the app always loads the published version (GitHub Pages can take up to 10 minutes to serve it); offline, it uses the last version it saved. The version in use is shown at the bottom of the home screen and of the Menu.
 
 ---
 
@@ -38,8 +41,8 @@ To try it locally, run `python3 -m http.server 8000` inside the folder and open 
 
 There are three ways, from easiest to most technical:
 
-1. **The editor** (Protocols → New protocol). Add tasks by type (word list, picture naming, reading passage, story from pictures, interview, text answers, multiple choice, information only), which sets the recording mode and order. Add slides as text, pictures, a pasted word list, or a PowerPoint/PDF. Select slides and move them between tasks. Saved protocols are stored as `protocol.json` plus media files; **Download .zip** exports them for backup or for another iPad.
-2. **A PowerPoint presentation** (Protocols → From PowerPoint or PDF). Each slide is reproduced as positioned HTML: text boxes and placeholders (inheriting from layouts and masters), tables (including PowerPoint's default table style), pictures (cropping, transparency), preset and custom shapes, connectors, groups and backgrounds. Shapes with a "next/previous slide" action are hidden, hidden slides are skipped, PowerPoint sections can become tasks, and footer codes (if they identify the slides) become item IDs. Images are downscaled to about 2.2× the size they're shown at. Animations, transitions, video, charts and SmartArt are not reproduced; exporting the deck as **PDF** gives an exact copy (each page becomes a picture slide, rendered with pdf.js on the device).
+1. **The editor** (Menu → Protocol → New protocol). Add tasks by type (word list, picture naming, reading passage, story from pictures, interview, text answers, multiple choice, information only), which sets the recording mode and order. Add slides as text, pictures, a pasted word list, or a PowerPoint/PDF. Select slides and move them between tasks. Saved protocols are stored as `protocol.json` plus media files; **Download .zip** exports them for backup or for another iPad.
+2. **A PowerPoint presentation** (Menu → Protocol → From PowerPoint or PDF). Each slide is reproduced as positioned HTML: text boxes and placeholders (inheriting from layouts and masters), tables (including PowerPoint's default table style), pictures (cropping, transparency), preset and custom shapes, connectors, groups and backgrounds. Shapes with a "next/previous slide" action are hidden, hidden slides are skipped, PowerPoint sections can become tasks, and footer codes (if they identify the slides) become item IDs. Images are downscaled to about 2.2× the size they're shown at. Animations, transitions, video, charts and SmartArt are not reproduced; exporting the deck as **PDF** gives an exact copy (each page becomes a picture slide, rendered with pdf.js on the device).
 3. **Markdown/CSV files**, described below. The in-app Guide has a beginner tutorial with templates to copy.
 
 ## Protocol format (Markdown)
@@ -88,7 +91,7 @@ recording: both
 |---|---|
 | `title` | Title shown in the app and in the metadata |
 | `consent` | Literal text, or the name of a `.md` file with the consent form |
-| `language` | `en` (default) or `es`: language of the texts Fieldrec shows the participant (consent checkboxes, “Task 1 of 5”, break and thank-you screens). The rest of the interface is in English |
+| `language` | `en` (default) or `es`: language of the texts FieldRec shows the participant (consent checkboxes, “Task 1 of 5”, break and thank-you screens). The rest of the interface is in English |
 | `author` | Optional |
 
 **Task keys**
@@ -136,7 +139,7 @@ vowels,pupa,,
 ### Adding protocols
 
 - **Bundled with the website:** create a folder in `protocols/` and add it to `protocols/index.json` (Markdown protocols there need the `.nojekyll` file; a `protocol.json` exported from the editor doesn't). For it to work offline from the start, also add its files to the `SHELL` list in `sw.js`.
-- **Imported on the iPad or a computer:** Protocols → **Import files or .zip**. Three ways:
+- **Imported on the iPad or a computer:** Menu → Protocol → View, edit and import protocols → **Import files or .zip**. Three ways:
   1. **A .zip of the protocol folder (recommended).** In the Files app, long-press the folder and choose **Compress**. Subfolders such as `img/` are kept.
   2. **A folder** (the **Import folder** button, computers only).
   3. **Loose files:** the `.md` or `.csv` plus the files it uses. If anything is missing, the app says so and you can add it with **Add files or .zip**. Files are matched by name, so don't use two images with the same name.
@@ -151,7 +154,7 @@ Images must be included in the protocol. For privacy, the app blocks anything lo
 |---|---|
 | Presentations | `.pptx` · `.pdf` |
 | Pictures | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` |
-| Protocol files | `.zip` (from Fieldrec, with `protocol.json`; or a Markdown protocol folder) · `.md` `.markdown` · `.csv` `.tsv` `.txt` |
+| Protocol files | `.zip` (from FieldRec, with `protocol.json`; or a Markdown protocol folder) · `.md` `.markdown` · `.csv` `.tsv` `.txt` |
 | Consent text | typed in the editor, or `.md` / `.txt` in Markdown protocols |
 | Not supported | `.ppt` (save as .pptx), `.key` (export to PowerPoint or PDF), `.docx`, `.odp` |
 
@@ -168,18 +171,19 @@ Images must be included in the protocol. For privacy, the app blocks anything lo
 
 The TextGrid has two tiers: `slide` (item ID) and `texto` (slide text).
 
-**Controls:** pressing *Next* while a per-token take is recording stops it, saves it and moves on. With a Bluetooth keyboard or presentation remote: → / Page Down (next), ← / Page Up (previous), Space (record/stop in per-token tasks) and Esc (menu).
+**Controls:** pressing *Next* while a per-token take is recording stops it, saves it and moves on. **End** (top left) opens the session menu. With a Bluetooth keyboard or presentation remote: → / Page Down (next), ← / Page Up (previous), Space (record/stop in per-token tasks) and Esc (menu).
 
 ## Audio
 
-- The microphone is requested **without echo cancellation, noise suppression or automatic gain control**. The **Microphone** screen shows what the device actually accepted, and the same information is saved in `session.json`.
+- The microphone is requested **without echo cancellation, noise suppression or automatic gain control**. **Menu → Microphone → What the device accepted** shows what the device actually got, and the same information is saved in `session.json`.
 - Audio is captured at the hardware rate (usually 48,000 Hz on iPad). Any other rate is resampled with a Kaiser-windowed sinc filter (about 80 dB stopband attenuation, passband up to about 92% of Nyquist).
 - **Pre-roll / post-roll:** the app always keeps the last second of audio, so a take can start 250 or 500 ms before the record button is tapped.
 - The level meter turns red when the signal clips, and clipping is recorded for each take (`clipped` in `trials.csv`).
+- **External input:** class-compliant USB audio interfaces and microphones appear in Menu → Microphone → Input. The app records one channel (plug the microphone into input 1). On iOS the app declares a recording audio session so the system routes the input to the connected device; this hasn't been tested on every interface yet.
 
 ## Export
 
-Sessions → **Export** → **Share / Save to Files** (AirDrop, OneDrive, the Files app…) or **Download ZIP**.
+Home screen → **Export** in the sessions table (or tap a session) → **Share / Save to Files** (AirDrop, OneDrive, the Files app…) or **Download ZIP**.
 
 ```
 P01_s1_2026-11-22/
@@ -192,7 +196,7 @@ P01_s1_2026-11-22/
   README.txt
 ```
 
-The **Log** (in Sessions) records when each session was created, completed, exported or deleted, without any audio. It can be exported as CSV.
+The **Activity log** (Menu → Activity log) records when each session was created, completed, exported or deleted, without any audio. It can be exported as CSV.
 
 ## Data safety
 
@@ -212,7 +216,7 @@ Recordings exist **only on the device**, in the browser's storage for this websi
 - Consent records participation, recording and archiving for future use separately, with a timestamp. A verbal consent recording is optional.
 - Deleting a session requires confirming that the export has been saved, and every deletion is logged.
 
-## Known limitations (v0.4.2)
+## Known limitations (v0.5.0)
 
 - Mono only.
 - A continuous task stays in memory until it ends. Keep each continuous task under about 30–40 minutes.
@@ -243,4 +247,5 @@ js/textgrid.js          Praat TextGrid
 sw.js                   offline cache
 protocols/              bundled protocols (index.json + folders)
 vendor/pdfjs/           pdf.js 4.10.38 legacy build (Apache 2.0)
+fonts/                  IBM Plex Sans and IBM Plex Mono, Latin and Latin Extended incl. IPA (SIL Open Font License, see fonts/OFL.txt)
 ```

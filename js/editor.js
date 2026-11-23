@@ -214,7 +214,7 @@ function render(top = false) {
     <header class="topbar"><button class="btn ghost back" id="ed-back">‹ Protocols</button><h2>Protocol editor</h2>
       <div class="tb-right"><span class="muted small" id="ed-dirty">${dirty ? 'Unsaved changes' : ''}</span><button class="btn primary" data-a="save">Save</button></div></header>
     ${(() => { const n = missingPaths().length; return n ? `<div class="notice warn"><b>${n} ${n === 1 ? 'picture used by these slides is' : 'pictures used by these slides are'} missing.</b>
-      An earlier version of Fieldrec could lose pictures when an edited protocol was saved. If they came from a PowerPoint, choose that same .pptx file to put them back: your tasks and slide order stay as they are. You can also choose the picture files.
+      An earlier version of FieldRec could lose pictures when an edited protocol was saved. If they came from a PowerPoint, choose that same .pptx file to put them back: your tasks and slide order stay as they are. You can also choose the picture files.
       <div class="row gap wrap" style="margin-top:10px"><button class="btn primary" data-a="restore">Restore from PowerPoint or pictures</button></div></div>` : ''; })()}
     ${sourceFormat === 'markdown' && recId ? '<div class="notice">This protocol was imported from a Markdown file. Saving it here converts it to the editor’s format; the original file isn’t changed.</div>' : ''}
     <section class="panel">
@@ -520,7 +520,7 @@ async function importDeck(t, file) {
         html: s.html.replace(/data-media="([^"]+)"/g, (m0, p) => `data-media="${map[p] || p}"`) });
     }
     const nav = res.slides.reduce((a, s) => a + s.navHidden, 0);
-    if (nav) notes.push(`${nav} navigation buttons (like “next”) were hidden, because Fieldrec has its own Next button.`);
+    if (nav) notes.push(`${nav} navigation buttons (like “next”) were hidden, because FieldRec has its own Next button.`);
     if (hidden) notes.push(`${hidden} slides hidden in PowerPoint were skipped.`);
     if (res.usedFooterIds) notes.push('The numbers in the slides’ footers were used as item IDs in file names.');
     notes.push(...res.warnings);
@@ -530,7 +530,7 @@ async function importDeck(t, file) {
   const sections = [...new Set(added.map((s) => s.section).filter(Boolean))];
   let split = false;
   if (sections.length > 1) {
-    split = await A.modal({ title: 'Use the presentation’s sections?', body: `<p>This presentation has ${sections.length} sections (${sections.map(esc).join(', ')}). Fieldrec can create one task for each section, or put all the slides in “${esc(t.label)}”.</p>`, ok: 'One task per section', cancel: 'All in this task' });
+    split = await A.modal({ title: 'Use the presentation’s sections?', body: `<p>This presentation has ${sections.length} sections (${sections.map(esc).join(', ')}). FieldRec can create one task for each section, or put all the slides in “${esc(t.label)}”.</p>`, ok: 'One task per section', cancel: 'All in this task' });
   }
   if (split) {
     const at = draft.tasks.indexOf(t);

@@ -7,7 +7,7 @@ import { makeTextGrid } from './textgrid.js';
 import { guideHTML } from './guide.js';
 import { openEditor } from './editor.js';
 
-const APP_VERSION = '0.4.2';
+const APP_VERSION = '0.5.0';
 const app = document.getElementById('app');
 const engine = new AudioEngine();
 let run = null;            // session in progress
@@ -42,7 +42,8 @@ const ptext = (proto) => PARTICIPANT_TEXT[langOf(proto)] || PARTICIPANT_TEXT.en;
 const qtext = (proto) => QUESTION_TEXT[langOf(proto)] || QUESTION_TEXT.en;
 
 const SETTINGS_KEY = 'fieldrec.settings';
-const DEFAULTS = { sampleRate: 'native', bitDepth: 16, prerollMs: 250, postrollMs: 250, autoAdvance: false, researcher: '', location: '', seenGuide: false };
+const DEFAULTS = { sampleRate: 'native', bitDepth: 16, prerollMs: 250, postrollMs: 250, autoAdvance: false, researcher: '', location: '', seenGuide: false,
+  protocolId: '', deviceId: '', deviceLabel: '' };
 function loadSettings() { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch (_) { return { ...DEFAULTS }; } }
 function saveSettings(s) { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {} }
 let settings = loadSettings();
@@ -221,55 +222,389 @@ async function loadProtocolEntry(entry) {
   return proto;
 }
 
+// ---------- icons ----------
+const svg = (d, w = 20, sw = 2) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const I = {
+  menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+  x: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  book: svg('<path d="M4 5h11a3 3 0 0 1 3 3v12H7a3 3 0 0 1-3-3z"/><path d="M8 9h6M8 13h6"/>'),
+  arrow: svg('<path d="M5 12h14M13 6l6 6-6 6"/>', 22, 2.2),
+  chevL: svg('<path d="M15 5l-7 7 7 7"/>', 22, 2.2),
+  chevR: svg('<path d="M9 5l7 7-7 7"/>', 22, 2.2),
+  chev: svg('<path d="M9 5l7 7-7 7"/>', 16, 2.2),
+  back: svg('<path d="M15 5l-7 7 7 7"/>', 18, 2.4),
+};
+
+// ---------- small formatters ----------
+const kHz = (hz) => `${+(Number(hz) / 1000).toFixed(2)} kHz`;
+const depthLabel = (b) => (Number(b) === 32 ? '32-bit float' : `${b}-bit`);
+function audioSummary() {
+  const rate = settings.sampleRate === 'native' ? (engine.sampleRate ? kHz(engine.sampleRate) : 'native rate') : kHz(settings.sampleRate);
+  return `${rate} · ${depthLabel(settings.bitDepth)}`;
+}
+const recordingSummary = () => `Pre-roll ${settings.prerollMs} ms · post-roll ${settings.postrollMs} ms${settings.autoAdvance ? ' · auto-advance' : ''}`;
+const micLabel = () => (engine.track && engine.track.label) || settings.deviceLabel || 'Default microphone';
+const fmtDur = (secs) => { const s = Math.round(secs); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`; };
+function shortDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return `Today ${t}`;
+  if (d.toDateString() === y.toDateString()) return `Yesterday ${t}`;
+  return `${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })}${d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : ''} ${t}`;
+}
+const bindGo = (root) => $$('[data-go]', root).forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); go(b.dataset.go, b.dataset.anchor); }));
+
+// ---------- microphone and protocol kept between sessions ----------
+async function micPermission() { try { return (await navigator.permissions.query({ name: 'microphone' })).state; } catch (_) { return 'unknown'; } }
+async function openMic() {
+  if (!engine.ctx && settings.deviceId) engine.deviceId = settings.deviceId;
+  await engine.open();
+  await engine.ensureRunning();
+  const label = engine.track && engine.track.label;
+  if (label && label !== settings.deviceLabel) { settings.deviceLabel = label; saveSettings(settings); }
+}
+async function currentProtocol(list) {
+  const all = list || await listProtocols();
+  return all.find((p) => p.id === settings.protocolId) || all[0] || null;
+}
+function protoSummary(p) {
+  const n = p.tasks.reduce((a, t) => a + t.slides.length * (t.repetitions || 1), 0);
+  return `${plural(p.tasks.length, 'task', 'tasks')} · ${plural(n, 'slide', 'slides')}`;
+}
+
 // ---------- HOME ----------
 async function screenHome() {
   stopMeterLoop();
-  const [sessions, protocols, storage] = await Promise.all([db.all('sessions').catch(() => []), listProtocols(), storageLine()]);
+  const [raw, list, storage] = await Promise.all([db.all('sessions').catch(() => []), listProtocols(), storageLine()]);
+  const sessions = raw.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const metas = await Promise.all(sessions.map((s) => db.fileMeta(s.id).catch(() => [])));
   const pending = sessions.filter((s) => !s.exportedAt).length;
-  const standalone = isStandalone();
+  const entry = await currentProtocol(list);
+  let proto = null, protoErr = '';
+  if (entry) { try { proto = await loadProtocolEntry(entry); } catch (e) { protoErr = e.message; } }
+  const tags = { incomplete: 'ended early', in_progress: 'interrupted', consent: 'not started' };
+  const rows = sessions.map((s, i) => {
+    const audio = metas[i].filter((x) => x.kind === 'wav' && !x.cutFrom);
+    const secs = audio.reduce((a, x) => a + (x.durationS || 0), 0);
+    const tag = tags[s.status];
+    return `<tr data-id="${esc(s.id)}">
+      <td class="id">${esc(s.participant)}·${esc(s.session)}${tag ? `<span class="tagline">${tag}</span>` : ''}</td>
+      <td class="date">${esc(shortDate(s.createdAt))}</td>
+      <td class="proto"><span>${esc(s.protocol && s.protocol.title)}</span></td>
+      <td class="num c-takes">${(s.trials || []).length}</td>
+      <td class="num c-len">${secs ? fmtDur(secs) : '—'}</td>
+      <td class="st">${s.exportedAt ? '<span class="muted">Exported</span>' : '<button class="btn" data-exp>Export</button>'}</td></tr>`;
+  }).join('');
 
-  setScreen(`
-    <div class="page home">
-      <header class="brand">
-        <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-        <div><h1>Fieldrec</h1><p>Recording and elicitation tasks for fieldwork</p></div>
-      </header>
-      ${!AudioEngine.supported() ? `<div class="notice warn">This browser can’t record audio at the quality Fieldrec needs. Use an up-to-date Safari (iPadOS 15 or later).</div>` : ''}
-      ${!standalone ? `<div class="notice warn"><b>You’re using Fieldrec in a browser tab.</b> Safari deletes a website’s data after 7 days without use, recordings included. Before collecting data, add it to the Home Screen (<b>Share → Add to Home Screen</b>) and open it from there. <a href="#" data-go="guide" data-anchor="g-data">Why?</a></div>` : ''}
-      ${!settings.seenGuide ? `<div class="notice">New to Fieldrec? Read the <a href="#" data-go="guide">Guide</a>: getting started, protocol format and how to keep your data safe.</div>` : ''}
-      <div class="grid">
-        <button class="card primary" data-go="setup">
-          <span class="card-ico">●</span><span class="card-t">New session</span>
-          <span class="card-s">Choose a protocol and a participant</span>
-        </button>
-        <button class="card" data-go="sessions">
-          <span class="card-ico">▤</span><span class="card-t">Sessions</span>
-          <span class="card-s">${sessions.length} saved${pending ? ` · <b>${pending} not exported</b>` : ''}</span>
-        </button>
-        <button class="card" data-go="protocols">
-          <span class="card-ico">☰</span><span class="card-t">Protocols</span>
-          <span class="card-s">${protocols.length} available · create · import</span>
-        </button>
-        <button class="card" data-go="mic">
-          <span class="card-ico">◉</span><span class="card-t">Microphone</span>
-          <span class="card-s">Check settings and level</span>
-        </button>
-        <button class="card wide" data-go="guide">
-          <span class="card-ico">ⓘ</span><span class="card-t">Guide</span>
-          <span class="card-s">Getting started · writing protocols · accepted file types · data safety · troubleshooting</span>
-        </button>
+  setScreen(`<div class="page wide home" id="home">
+    <header class="hbar"><h1 class="wordmark">FieldRec</h1>
+      <div class="hbar-r"><button class="btn" data-go="guide">${I.book}Guide</button><button class="btn" id="menu-btn">${I.menu}Menu</button></div></header>
+    ${!AudioEngine.supported() ? `<div class="notice warn">This browser can’t record audio at the quality FieldRec needs. Use an up-to-date Safari (iPadOS 15 or later).</div>` : ''}
+    ${!isStandalone() ? `<div class="notice warn"><span><b>You’re using FieldRec in a browser tab.</b> Safari deletes a website’s data, recordings included, after 7 days without use. Before collecting data, add it to the Home Screen (<b>Share → Add to Home Screen</b>) and open it from there.</span> <a href="#" data-go="guide" data-anchor="g-data">Why?</a></div>` : ''}
+    ${!settings.seenGuide ? `<div class="notice"><span>New to FieldRec? The guide covers getting started, building protocols and keeping your data safe.</span> <a href="#" data-go="guide">Open the guide</a></div>` : ''}
+    <div class="sec-label"><span>New session</span></div>
+    <div class="steps3">
+      <section class="step-card" id="mic-card"></section>
+      <section class="step-card" id="proto-card">
+        <div class="step-h"><span class="step-n">2</span><span class="step-t">Protocol</span><button class="link-btn" data-menu="protocol">Change</button></div>
+        <div class="step-b">${entry ? `<div class="ptitle">${esc(entry.title)}</div>
+          <div class="sub">${proto ? protoSummary(proto) : `<span class="bad">Can’t be read: ${esc(protoErr)}</span>`}</div>`
+          : '<div class="sub">No protocol yet. Tap Change to create or import one.</div>'}</div>
+      </section>
+      <button class="start-btn" data-go="setup" id="start-session" ${proto && proto.tasks.length ? '' : 'disabled'}><span class="step-n">3</span><span class="step-t">Start session</span>${I.arrow}</button>
+    </div>
+    <div class="sec-label"><span>Saved sessions</span><span class="mono">${sessions.length}${pending ? ` · ${pending} not exported` : ''}</span></div>
+    <table class="stable">
+      <thead><tr><th>ID</th><th class="date">Date</th><th>Protocol</th><th class="num c-takes">Takes</th><th class="num c-len">Length</th><th class="st">Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="empty">No sessions yet. Recorded sessions stay here until you delete them.</td></tr>'}</tbody>
+    </table>
+    <footer class="foot">Recordings stay on this iPad until you export them · ${esc(storage)} · v${APP_VERSION}</footer>
+  </div>`, 'scroll');
+  bindGo(app);
+  $('#menu-btn').addEventListener('click', () => openMenu('root', screenHome));
+  $$('[data-menu]', app).forEach((b) => b.addEventListener('click', () => openMenu(b.dataset.menu, screenHome)));
+  $$('tr[data-id]', app).forEach((tr) => tr.addEventListener('click', (e) => openSessionSheet(tr.dataset.id, !!e.target.closest('[data-exp]'))));
+  renderMicCard();
+  autoMic();
+}
+
+function renderMicCard() {
+  const card = $('#mic-card');
+  if (!card) return;
+  const live = engine.isLive;
+  card.innerHTML = `<div class="step-h"><span class="step-n">1</span><span class="step-t">Microphone</span><button class="link-btn" data-menu="mic">Change</button></div>
+    <div class="step-b"><div class="sub">${esc(micLabel())}</div><div class="sub">${esc(audioSummary())}</div>
+    ${live ? `<div class="step-meter"><div class="meter"><div class="fill"></div></div><span class="meter-db">—</span></div><p class="hint">Live. Say a few words to check the level.</p>`
+      : `<button class="btn" id="home-mic-on">Turn on to check the level</button>`}</div>`;
+  $('[data-menu]', card).addEventListener('click', () => openMenu('mic', screenHome));
+  const on = $('#home-mic-on', card);
+  if (on) on.addEventListener('click', async () => {
+    try { await openMic(); } catch (e) { toast('Couldn’t open the microphone: ' + e.message, 'err'); }
+    renderMicCard();
+  });
+  if (live) startMeterLoop();
+}
+// Turns the live meter on by itself only if microphone access was already granted (no surprise prompts).
+async function autoMic() {
+  if (engine.isLive || run) return;
+  if ((await micPermission()) !== 'granted') return;
+  try { await openMic(); } catch (_) { return; }
+  renderMicCard();
+}
+
+// ---------- side sheet ----------
+let sheet = null;
+function openSheet(onClose, kind = '') {
+  closeSheet(true);
+  const el = document.createElement('div');
+  el.className = 'sheet-back';
+  el.innerHTML = '<aside class="sheet" role="dialog" aria-modal="true"><div class="sheet-in"></div></aside>';
+  document.body.appendChild(el);
+  el.addEventListener('click', (e) => { if (e.target === el) closeSheet(); });
+  sheet = { el, body: $('.sheet-in', el), onClose, kind, page: null };
+  requestAnimationFrame(() => el.classList.add('open'));
+  return sheet;
+}
+function closeSheet(silent = false) {
+  if (!sheet) return;
+  const s = sheet;
+  sheet = null;
+  s.el.remove();
+  if (!silent && s.onClose) s.onClose();
+}
+const bindSheetClose = (sh) => $$('[data-close]', sh.body).forEach((b) => b.addEventListener('click', () => closeSheet()));
+
+// ---------- MENU ----------
+function openMenu(page = 'root', onClose = null) {
+  if (!sheet || sheet.kind !== 'menu') openSheet(onClose, 'menu');
+  return renderMenu(page);
+}
+const mrow = (m, t, v, attr) => `<button class="mrow" ${attr || `data-m="${m}"`}><span class="mtx"><span class="mt">${esc(t)}</span>${v ? `<span class="mv">${esc(v)}</span>` : ''}</span><span class="chev">${I.chev}</span></button>`;
+const seg = (name, opts, cur) => `<div class="seg" data-seg="${name}" role="group">${opts.map(([v, l]) =>
+  `<button type="button" data-v="${v}" class="${String(cur) === String(v) ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
+
+function rateNote() {
+  const el = $('#rate-note');
+  if (!el) return;
+  const v = settings.sampleRate, n = engine.sampleRate;
+  el.textContent = v === 'native' ? (n ? `Records at the device rate, ${kHz(n)}` : 'Usually 48 kHz on iPad')
+    : n && Number(v) > n ? `Above the real capture rate (${kHz(n)}): adds no information` : n && Number(v) !== n ? `Resampled from ${kHz(n)}` : '';
+}
+function bindSeg(el) {
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    settings[el.dataset.seg] = b.dataset.v === 'native' ? 'native' : Number(b.dataset.v);
+    saveSettings(settings);
+    $$('button', el).forEach((x) => x.classList.toggle('on', x === b));
+    rateNote();
+  });
+}
+
+async function renderMenu(page) {
+  const sh = sheet;
+  if (!sh) return;
+  sh.page = page;
+  const top = (title) => (title
+    ? `<div class="sh-top"><button class="link-btn" data-m="root">${I.back}Menu</button><button class="icon-x" data-close id="sheet-close" aria-label="Close">${I.x}</button></div><h2 class="sh-title">${esc(title)}</h2>`
+    : `<div class="sh-top"><h2 class="sh-title">Menu</h2><button class="icon-x" data-close id="sheet-close" aria-label="Close">${I.x}</button></div>`);
+  let html = '';
+  if (page === 'protocol') {
+    const list = await listProtocols();
+    const cur = await currentProtocol(list);
+    html = top('Protocol') + `<p class="small muted">Used for every new session until you change it.</p>
+      ${list.map((p) => `<button class="radio-row ${cur && p.id === cur.id ? 'on' : ''}" data-pid="${esc(p.id)}"><span class="dot"></span>
+        <span class="rtx">${esc(p.title)}<small>${p.kind === 'builtin' ? 'Included with the app' : 'Imported · ' + esc(fmtDate(p.record.updatedAt || p.record.importedAt))}</small></span></button>`).join('')
+        || '<p class="muted">No protocols yet.</p>'}
+      <div class="sh-actions">
+        <button class="btn" data-goto="editor-new">New protocol</button>
+        <button class="btn" data-goto="editor-deck">From PowerPoint or PDF</button>
+        <button class="btn" data-goto="protocols">View, edit and import protocols</button>
+      </div>`;
+  } else if (page === 'mic') {
+    const live = engine.isLive;
+    const devs = live ? await engine.listInputs() : [];
+    let curId = engine.deviceId;
+    try { curId = (engine.track && engine.track.getSettings().deviceId) || curId; } catch (_) {}
+    const inputs = !live ? '<p class="small muted">Turn on the microphone to list the inputs.</p>'
+      : devs.length ? devs.map((d, k) => `<button class="radio-row ${d.deviceId === curId ? 'on' : ''}" data-dev="${esc(d.deviceId)}" data-label="${esc(d.label)}"><span class="dot"></span><span class="rtx">${esc(d.label || 'Input ' + (k + 1))}</span></button>`).join('')
+        : '<p class="small muted">The browser didn’t report any inputs.</p>';
+    const i = live ? engine.info() : null;
+    const yn = (v) => (v === true ? '<b class="bad">yes</b>' : v === false ? '<span class="good">no</span>' : '<span class="muted">unknown</span>');
+    html = top('Microphone') + `<div class="live-card">
+        <div class="row between"><b>${esc(micLabel())}</b>${live ? '<span class="live-tag">Live</span>' : ''}</div>
+        ${live ? `<div class="meter big"><div class="fill"></div></div><div class="meter-row"><span class="meter-db" data-fmt="peak">—</span><span class="meter-clip">No clipping</span></div>
+          <p class="small muted">Speak at a normal volume. The bar should stay around the middle and never turn red.</p>`
+          : `<p class="small muted">Turn the microphone on to check the level and choose the input.</p><button class="btn primary" id="mic-open">Turn on microphone</button>`}
       </div>
-      <footer class="foot">${esc(storage)} · v${APP_VERSION}</footer>
-    </div>`, 'scroll');
-  $$('[data-go]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); go(b.dataset.go, b.dataset.anchor); }));
+      <div class="m-label">Input</div>${inputs}
+      <p class="small muted">An audio interface or external microphone should appear here once connected. If it doesn’t, unplug it, plug it in again and reopen this page.</p>
+      <div class="m-label">Sample rate (kHz)</div>
+      ${seg('sampleRate', [['native', 'Native'], [48000, '48'], [44100, '44.1'], [22050, '22.05'], [16000, '16']], settings.sampleRate)}
+      <span class="rate-note" id="rate-note"></span>
+      <div class="m-label">Bit depth</div>
+      ${seg('bitDepth', [[16, '16-bit'], [24, '24-bit'], [32, '32-bit float']], settings.bitDepth)}
+      <button class="btn wide-btn" id="mic-test" ${live ? '' : 'disabled'}>Make a 5-second test recording</button>
+      <audio id="mic-play" controls class="hidden"></audio>
+      ${live ? `<details><summary>What the device accepted</summary><table class="kv">
+        <tr><th>Input</th><td>${esc(i.inputLabel || '—')}</td></tr>
+        <tr><th>Capture sample rate</th><td><b>${i.contextSampleRate} Hz</b></td></tr>
+        <tr><th>Track sample rate</th><td>${i.obtained.sampleRate ? i.obtained.sampleRate + ' Hz' : '<span class="muted">not reported</span>'}</td></tr>
+        <tr><th>Channels</th><td>${i.obtained.channelCount ?? '<span class="muted">not reported</span>'}</td></tr>
+        <tr><th>Echo cancellation</th><td>${yn(i.obtained.echoCancellation)}</td></tr>
+        <tr><th>Noise suppression</th><td>${yn(i.obtained.noiseSuppression)}</td></tr>
+        <tr><th>Automatic gain control</th><td>${yn(i.obtained.autoGainControl)}</td></tr>
+        <tr><th>Base latency</th><td>${i.baseLatency != null ? (i.baseLatency * 1000).toFixed(1) + ' ms' : '—'}</td></tr>
+      </table><p class="small muted">The three kinds of voice processing should read “no”. FieldRec records one channel: plug the microphone into input 1 of an interface.</p></details>` : ''}
+      <p class="sh-foot">Kept for every session until you change it.</p>`;
+  } else if (page === 'recording') {
+    html = top('Recording') + `<div class="m-label">Pre-roll (ms)</div>${seg('prerollMs', [[0, '0'], [250, '250'], [500, '500']], settings.prerollMs)}
+      <div class="m-label">Post-roll (ms)</div>${seg('postrollMs', [[0, '0'], [250, '250'], [500, '500']], settings.postrollMs)}
+      <p class="small muted">Pre-roll keeps the audio from just before you tap record, so the start of a word is never cut. Post-roll keeps recording for a moment after you stop.</p>
+      <label class="check"><input type="checkbox" id="m-auto" ${settings.autoAdvance ? 'checked' : ''}> <span>In per-token tasks, go to the next slide when a recording is stopped</span></label>
+      <p class="small muted">Whether a task records each slide separately or continuously is set in the protocol, task by task.</p>`;
+  } else if (page === 'storage') {
+    const [sessions, storage] = await Promise.all([db.all('sessions').catch(() => []), storageLine()]);
+    const pending = sessions.filter((s) => !s.exportedAt).length;
+    let persisted = false;
+    try { persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false; } catch (_) {}
+    html = top('Storage') + `<table class="kv">
+        <tr><th>Space used</th><td>${esc(storage)}</td></tr>
+        <tr><th>Sessions on this iPad</th><td>${sessions.length}</td></tr>
+        <tr><th>Not exported</th><td>${pending ? `<b class="bad">${pending}</b>` : '0'}</td></tr>
+        <tr><th>Home Screen app</th><td>${isStandalone() ? 'Yes' : '<b class="bad">No: data can expire</b>'}</td></tr>
+      </table>
+      ${persisted ? '' : '<button class="btn wide-btn" id="m-persist">Ask the browser to protect the data</button>'}
+      <p class="small muted">Exporting after every session is the only real backup.</p>
+      <div class="sh-actions"><button class="btn" data-goto="guide" data-anchor="g-data">How recordings can be lost</button></div>`;
+  } else {
+    page = 'root';
+    sh.page = page;
+    const [list, sessions, storage] = await Promise.all([listProtocols(), db.all('sessions').catch(() => []), storageLine()]);
+    const cur = await currentProtocol(list);
+    const pending = sessions.filter((s) => !s.exportedAt).length;
+    html = top() + `<div class="m-label">Used for every new session</div>
+      ${mrow('protocol', 'Protocol', cur ? cur.title : 'None yet')}
+      ${mrow('mic', 'Microphone', `${micLabel()} · ${audioSummary()}`)}
+      ${mrow('recording', 'Recording', recordingSummary())}
+      <div class="m-label">Help and data</div>
+      ${mrow('', 'Guide', 'Getting started, protocols, data safety', 'data-goto="guide"')}
+      ${mrow('storage', 'Storage', `${storage}${pending ? ` · ${pending} not exported` : ''}`)}
+      ${mrow('', 'Activity log', '', 'data-goto="audit"')}
+      <p class="sh-foot">FieldRec ${APP_VERSION} · ${isStandalone() ? 'Installed on the Home Screen' : 'Running in a browser tab'}</p>`;
+  }
+  if (sheet !== sh || sh.page !== page) return; // another page was opened meanwhile
+  sh.body.innerHTML = html;
+  sh.body.scrollTop = 0;
+  bindSheetClose(sh);
+  $$('[data-m]', sh.body).forEach((b) => b.addEventListener('click', () => renderMenu(b.dataset.m)));
+  $$('[data-goto]', sh.body).forEach((b) => b.addEventListener('click', () => {
+    const g = b.dataset.goto;
+    closeSheet(true);
+    if (g === 'audit') screenAudit();
+    else if (g === 'editor-new') go('editor', {});
+    else if (g === 'editor-deck') go('editor', { start: 'deck' });
+    else go(g, b.dataset.anchor);
+  }));
+  $$('.seg', sh.body).forEach(bindSeg);
+  $$('[data-pid]', sh.body).forEach((b) => b.addEventListener('click', () => {
+    settings.protocolId = b.dataset.pid; saveSettings(settings);
+    renderMenu('protocol');
+  }));
+  if (page === 'mic') bindMicPage(sh);
+  const auto = $('#m-auto', sh.body);
+  if (auto) auto.addEventListener('change', () => { settings.autoAdvance = auto.checked; saveSettings(settings); });
+  const persist = $('#m-persist', sh.body);
+  if (persist) persist.addEventListener('click', async () => {
+    let ok = false;
+    try { ok = navigator.storage && navigator.storage.persist ? await navigator.storage.persist() : false; } catch (_) {}
+    toast(ok ? 'The browser will protect the data' : 'The browser declined. Export after every session.', ok ? '' : 'err');
+    renderMenu('storage');
+  });
+}
+
+function bindMicPage(sh) {
+  rateNote();
+  if (engine.isLive) startMeterLoop();
+  const open = $('#mic-open', sh.body);
+  if (open) open.addEventListener('click', async () => {
+    try { await openMic(); } catch (e) { return toast('Couldn’t open the microphone: ' + e.message, 'err'); }
+    renderMenu('mic');
+  });
+  $$('[data-dev]', sh.body).forEach((b) => b.addEventListener('click', async () => {
+    settings.deviceId = b.dataset.dev; settings.deviceLabel = b.dataset.label || ''; saveSettings(settings);
+    try { await engine.useDevice(b.dataset.dev); } catch (e) { toast(e.message, 'err'); }
+    renderMenu('mic');
+  }));
+  const test = $('#mic-test', sh.body);
+  if (test) test.addEventListener('click', async () => {
+    test.disabled = true;
+    try {
+      await engine.ensureRunning();
+      engine.start(0);
+      for (let s = 5; s > 0; s--) { test.textContent = `Recording… ${s}`; await new Promise((r) => setTimeout(r, 1000)); }
+      const res = await engine.stop(0);
+      const enc = await engine.encode(res.samples, res.sampleRate, res.sampleRate, 16);
+      const a = $('#mic-play', sh.body);
+      if (a) {
+        if (a.src) URL.revokeObjectURL(a.src);
+        a.src = URL.createObjectURL(new Blob([enc.full], { type: 'audio/wav' }));
+        a.classList.remove('hidden');
+      }
+      toast(res.clipped ? 'Test recorded (with clipping)' : 'Test recorded: play it below', res.clipped ? 'err' : '');
+    } catch (err) { toast(err.message, 'err'); }
+    test.textContent = 'Make a 5-second test recording'; test.disabled = false;
+  });
+}
+
+// ---------- session details (from the sessions table) ----------
+async function openSessionSheet(id, exportNow = false) {
+  const s = await db.get('sessions', id);
+  if (!s) return;
+  const files = await db.fileMeta(id);
+  const audio = files.filter((x) => x.kind === 'wav');
+  const size = files.reduce((a, x) => a + (x.size || 0), 0);
+  const lbl = { complete: 'Complete', incomplete: 'Ended early', in_progress: 'Interrupted', consent: 'Not started' };
+  const sh = openSheet(screenHome, 'session');
+  sh.body.innerHTML = `<div class="sh-top"><h2 class="sh-title">${esc(s.participant)} · ${esc(s.session)}</h2><button class="icon-x" data-close id="sheet-close" aria-label="Close">${I.x}</button></div>
+    <table class="kv">
+      <tr><th>Date</th><td>${esc(fmtDate(s.createdAt))}</td></tr>
+      <tr><th>Protocol</th><td>${esc(s.protocol && s.protocol.title)}</td></tr>
+      <tr><th>Status</th><td>${esc(lbl[s.status] || s.status)}</td></tr>
+      <tr><th>Takes</th><td>${(s.trials || []).length}</td></tr>
+      <tr><th>Audio files</th><td>${audio.length} · ${fmtBytes(size)}</td></tr>
+      <tr><th>Last export</th><td>${s.exportedAt ? esc(fmtDate(s.exportedAt)) : '<b class="bad">Never</b>'}</td></tr>
+    </table>
+    <button class="btn primary wide-btn" id="s-exp">Export</button>
+    <div id="s-share" class="share-slot"></div>
+    <div class="sh-foot"><button class="btn ghost danger-t" id="s-del">Delete from this iPad</button></div>`;
+  bindSheetClose(sh);
+  const slot = $('#s-share', sh.body);
+  $('#s-exp', sh.body).addEventListener('click', () => prepareExport(id, slot));
+  $('#s-del', sh.body).addEventListener('click', async () => {
+    const ok = await modal({
+      title: `Delete ${s.participant} · ${s.session}`,
+      body: s.exportedAt ? `<p>Last exported ${fmtDate(s.exportedAt)}.</p>` : '<p><b>This session has never been exported.</b> If you delete it, the recordings will be lost.</p>',
+      ok: 'Delete from device', danger: true,
+      requireCheck: 'I have checked that the export is saved somewhere safe',
+    });
+    if (!ok) return;
+    const n = await db.deleteSession(id);
+    await db.audit('session_deleted', { sessionId: id, participant: s.participant, files: n, wasExported: !!s.exportedAt });
+    toast('Session deleted');
+    closeSheet();
+  });
+  if (exportNow) prepareExport(id, slot);
 }
 
 function go(where, arg) {
-  if (where === 'home') return screenHome();
+  closeSheet(true);
+  if (where === 'home' || where === 'sessions') return screenHome();
   if (where === 'setup') return screenSetup(arg);
-  if (where === 'sessions') return screenSessions();
-  if (where === 'protocols') return screenProtocols();
-  if (where === 'mic') return screenMic();
+  if (where === 'protocols') return screenProtocols(arg);
+  if (where === 'mic') return screenHome().then(() => openMenu('mic', screenHome));
   if (where === 'guide') return screenGuide(arg);
   if (where === 'editor') return openEditor(editorApi(), arg || {});
 }
@@ -277,7 +612,7 @@ const editorApi = () => ({ app, setScreen, toast, modal, db, uuid, go, loadProto
 
 const backBar = (title, right = '') => `
   <header class="topbar"><button class="btn ghost back" data-back>‹ Home</button><h2>${esc(title)}</h2><div class="tb-right">${right}</div></header>`;
-function bindBack() { $$('[data-back]').forEach((b) => b.addEventListener('click', () => { if (!run) engine.close(); go('home'); })); }
+function bindBack() { $$('[data-back]').forEach((b) => b.addEventListener('click', () => go('home'))); }
 
 // ---------- GUIDE ----------
 async function screenGuide(anchor) {
@@ -302,24 +637,28 @@ async function screenGuide(anchor) {
   if (anchor) { const d = document.getElementById(anchor); if (d) { d.open = true; setTimeout(() => d.scrollIntoView({ block: 'start' }), 50); } }
 }
 
-// ---------- level meter ----------
+// ---------- level meter (drives every .meter on screen) ----------
 let meterRaf = null, meterPeak = 0, clipUntil = 0;
 engine.onLevel((peak, clipped) => {
   meterPeak = Math.max(meterPeak, peak);
   if (clipped) clipUntil = performance.now() + 1200;
 });
 function startMeterLoop() {
-  stopMeterLoop();
+  if (meterRaf) return;
   const tick = () => {
-    const fill = $('.meter .fill');
-    if (fill) {
+    const meters = $$('.meter');
+    if (meters.length) {
       const dbfs = meterPeak > 0 ? 20 * Math.log10(meterPeak) : -90;
       const pct = Math.max(0, Math.min(100, ((dbfs + 60) / 60) * 100));
-      fill.style.width = pct + '%';
-      fill.classList.toggle('hot', dbfs > -6);
-      $('.meter').classList.toggle('clipping', performance.now() < clipUntil);
-      const lbl = $('.meter-db');
-      if (lbl) lbl.textContent = dbfs > -90 ? `${dbfs.toFixed(0)} dBFS` : '—';
+      const clipping = performance.now() < clipUntil;
+      for (const m of meters) {
+        const f = m.firstElementChild;
+        if (f) { f.style.width = pct + '%'; f.classList.toggle('hot', dbfs > -6); }
+        m.classList.toggle('clipping', clipping);
+      }
+      const txt = dbfs > -90 ? `${dbfs.toFixed(0).replace('-', '−')} dB` : '—';
+      $$('.meter-db').forEach((l) => { l.textContent = l.dataset.fmt === 'peak' && dbfs > -90 ? `Peak ${txt}` : txt; });
+      $$('.meter-clip').forEach((l) => { l.textContent = clipping ? 'Clipping' : 'No clipping'; l.classList.toggle('bad', clipping); });
     }
     meterPeak *= 0.85;
     updateClock();
@@ -328,73 +667,6 @@ function startMeterLoop() {
   meterRaf = requestAnimationFrame(tick);
 }
 function stopMeterLoop() { if (meterRaf) cancelAnimationFrame(meterRaf); meterRaf = null; }
-
-// ---------- MICROPHONE ----------
-async function screenMic() {
-  setScreen(`<div class="page">${backBar('Microphone')}
-    <section class="panel">
-      <div class="meter big"><div class="fill"></div></div>
-      <div class="row between"><span class="meter-db muted">—</span><span class="muted small">The meter turns red when the signal clips</span></div>
-      <div class="row gap">
-        <button class="btn primary" id="mic-open">Turn on microphone</button>
-        <select id="mic-dev" class="hidden"></select>
-        <button class="btn" id="mic-test" disabled>Record 5 s test</button>
-      </div>
-      <audio id="mic-play" controls class="hidden"></audio>
-    </section>
-    <section class="panel"><h3>Settings accepted by the device</h3><div id="mic-info" class="muted">Turn on the microphone to see them.</div></section>
-    <section class="panel"><h3>What to look for</h3><ul class="tips">
-      <li><b>Context sample rate</b> is the real capture rate. Choosing a different rate when recording means resampling.</li>
-      <li><b>Echo cancellation, noise suppression and automatic gain control</b> should read “no”. If any reads “yes” or “unknown”, iPadOS may be processing the voice.</li>
-      <li>If you plug in an external microphone after turning the microphone on, tap “Turn on microphone” again.</li>
-    </ul></section></div>`, 'scroll');
-  bindBack();
-  startMeterLoop();
-  const showInfo = async () => {
-    const i = engine.info();
-    const yn = (v) => (v === true ? '<b class="bad">yes</b>' : v === false ? '<span class="good">no</span>' : '<span class="muted">unknown</span>');
-    $('#mic-info').innerHTML = `<table class="kv">
-      <tr><th>Input</th><td>${esc(i.inputLabel || '—')}</td></tr>
-      <tr><th>Context sample rate</th><td><b>${i.contextSampleRate} Hz</b></td></tr>
-      <tr><th>Track sample rate</th><td>${i.obtained.sampleRate ? i.obtained.sampleRate + ' Hz' : '<span class="muted">not reported</span>'}</td></tr>
-      <tr><th>Channels</th><td>${i.obtained.channelCount ?? '<span class="muted">not reported</span>'}</td></tr>
-      <tr><th>Echo cancellation</th><td>${yn(i.obtained.echoCancellation)}</td></tr>
-      <tr><th>Noise suppression</th><td>${yn(i.obtained.noiseSuppression)}</td></tr>
-      <tr><th>Automatic gain control</th><td>${yn(i.obtained.autoGainControl)}</td></tr>
-      <tr><th>Base latency</th><td>${i.baseLatency != null ? (i.baseLatency * 1000).toFixed(1) + ' ms' : '—'}</td></tr>
-    </table>`;
-    const devs = await engine.listInputs();
-    const sel = $('#mic-dev');
-    if (devs.length > 1) {
-      sel.classList.remove('hidden');
-      sel.innerHTML = devs.map((d, k) => `<option value="${esc(d.deviceId)}" ${engine.deviceId === d.deviceId ? 'selected' : ''}>${esc(d.label || 'Input ' + (k + 1))}</option>`).join('');
-    }
-  };
-  $('#mic-open').addEventListener('click', async () => {
-    try { await engine.open(); await engine.ensureRunning(); $('#mic-test').disabled = false; await showInfo(); }
-    catch (e) { toast('Couldn’t open the microphone: ' + e.message, 'err'); }
-  });
-  $('#mic-dev').addEventListener('change', async (e) => {
-    try { await engine.useDevice(e.target.value); await showInfo(); } catch (err) { toast(err.message, 'err'); }
-  });
-  $('#mic-test').addEventListener('click', async (e) => {
-    const b = e.target; b.disabled = true;
-    try {
-      await engine.ensureRunning();
-      engine.start(0);
-      for (let s = 5; s > 0; s--) { b.textContent = `Recording… ${s}`; await new Promise((r) => setTimeout(r, 1000)); }
-      const res = await engine.stop(0);
-      const enc = await engine.encode(res.samples, res.sampleRate, res.sampleRate, 16);
-      const a = $('#mic-play');
-      if (a.src) URL.revokeObjectURL(a.src);
-      a.src = URL.createObjectURL(new Blob([enc.full], { type: 'audio/wav' }));
-      a.classList.remove('hidden');
-      toast(res.clipped ? 'Test recorded (with clipping)' : 'Test recorded', res.clipped ? 'err' : '');
-    } catch (err) { toast(err.message, 'err'); }
-    b.textContent = 'Record 5 s test'; b.disabled = false;
-  });
-  if (engine.ctx) { $('#mic-test').disabled = false; showInfo(); }
-}
 
 // ---------- PROTOCOLS ----------
 const IMPORT_ACCEPT = '.zip,application/zip,.json,application/json,.md,.markdown,.csv,.tsv,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,image/*,text/*';
@@ -467,6 +739,7 @@ const importedToast = (proto) => toast(proto.missing.length ? `Imported, but ${p
 
 async function screenProtocols(showId) {
   const list = await listProtocols();
+  const cur = await currentProtocol(list);
   setScreen(`<div class="page">${backBar('Protocols')}
     <section class="panel create">
       <h3>Create a protocol</h3>
@@ -475,12 +748,12 @@ async function screenProtocols(showId) {
     </section>
     <section class="panel">
       <h3>Import a protocol file</h3>
-      <p class="muted">For protocols downloaded from Fieldrec (.zip) or written as Markdown/CSV files. The easiest way is a <b>.zip of the protocol folder</b> (in the Files app: long-press the folder → <b>Compress</b>). <a href="#" data-go="guide" data-anchor="g-markdown">Markdown guide</a></p>
+      <p class="muted">For protocols downloaded from FieldRec (.zip) or written as Markdown/CSV files. The easiest way is a <b>.zip of the protocol folder</b> (in the Files app: long-press the folder → <b>Compress</b>). <a href="#" data-go="guide" data-anchor="g-markdown">Markdown guide</a></p>
       <div class="row gap wrap">${importButtons('imp', 'Import files or .zip', 'Import folder')}</div>
     </section>
     <div class="list">${list.map((p) => `
       <div class="item">
-        <div class="item-main"><div class="item-t">${esc(p.title)}</div>
+        <div class="item-main"><div class="item-t">${esc(p.title)}${cur && cur.id === p.id ? ' <span class="tag ok">In use</span>' : ''}</div>
           <div class="item-s">${p.kind === 'builtin' ? 'Included with the app' : `Imported · ${plural(Object.keys(p.record.files).length, 'file', 'files')} · ${fmtDate(p.record.updatedAt || p.record.importedAt)}`}</div></div>
         <div class="item-actions">
           <button class="btn" data-preview="${esc(p.id)}">View</button>
@@ -554,12 +827,15 @@ async function showPreview(entry) {
         `<div class="thumb"><div class="thumb-in${s.kind === 'pptx' ? ' is-pptx' : ''}">${renderSlide(s, p.resolve)}</div><span>${esc(t.name)} · ${esc(s.id)}</span></div>`)).join('')}</div>
       <div class="row gap wrap">
         <button class="btn primary" id="pv-start" ${p.tasks.length ? '' : 'disabled'}>New session with this protocol</button>
+        ${settings.protocolId === entry.id ? '' : '<button class="btn" id="pv-use">Use for new sessions</button>'}
         <button class="btn" id="pv-edit">${entry.kind === 'builtin' ? 'Edit a copy' : 'Edit'}</button>
         <button class="btn" id="pv-zip">Download .zip</button>
       </div>
     </section>`;
     layoutPptx(box);
     $('#pv-start').addEventListener('click', () => go('setup', entry.id));
+    const use = $('#pv-use');
+    if (use) use.addEventListener('click', () => { settings.protocolId = entry.id; saveSettings(settings); toast(`New sessions will use “${p.title}”`); screenProtocols(entry.id); });
     $('#pv-edit').addEventListener('click', () => go('editor', { entry }));
     const zipBtn = $('#pv-zip');
     zipBtn.addEventListener('click', async () => {
@@ -578,7 +854,7 @@ async function showPreview(entry) {
   } catch (err) {
     if (err instanceof UnreadableProtocol) {
       box.innerHTML = `<section class="panel"><div class="notice warn"><b>This protocol can’t be opened.</b> ${esc(err.message)}
-        It was probably imported with an earlier version of Fieldrec, which stored files in a way Safari can lose when the page reloads.
+        It was probably imported with an earlier version of FieldRec, which stored files in a way Safari can lose when the page reloads.
         Delete it and import it again (preferably as a .zip).</div>
         <div class="row gap wrap"><button class="btn danger" id="pv-del">Delete this protocol</button>${importButtons('reimp', 'Import again', 'Import folder')}</div></section>`;
       $('#pv-del').addEventListener('click', async () => {
@@ -602,15 +878,13 @@ async function showPreview(entry) {
 }
 
 // ---------- NEW SESSION ----------
+// The protocol and the audio settings come from the menu; this screen only asks for the participant.
 async function screenSetup(preselect) {
-  const list = await listProtocols();
-  const rateOpt = (v, l) => `<option value="${v}" ${String(settings.sampleRate) === String(v) ? 'selected' : ''}>${l}</option>`;
+  if (preselect) { settings.protocolId = preselect; saveSettings(settings); }
   setScreen(`<div class="page">${backBar('New session')}
     <form id="setup" class="form" autocomplete="off">
       <section class="panel">
-        <h3>Session</h3>
-        <label class="field"><span>Protocol</span><select name="protocol" required>
-          ${list.map((p) => `<option value="${esc(p.id)}" ${p.id === preselect ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>
+        <h3>Participant</h3>
         <div class="cols">
           <label class="field"><span>Participant code</span><input name="participant" required pattern="[A-Za-z0-9_\\-]{1,24}" placeholder="P01" autocapitalize="characters" spellcheck="false"><small>Letters, numbers, - and _ only. Never a name.</small></label>
           <label class="field"><span>Session</span><input name="session" value="s1" pattern="[A-Za-z0-9_\\-]{1,16}" spellcheck="false"></label>
@@ -620,34 +894,35 @@ async function screenSetup(preselect) {
           <label class="field"><span>Location</span><input name="location" value="${esc(settings.location)}"></label>
         </div>
         <label class="field"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
-        <div id="task-pick"></div>
       </section>
       <section class="panel">
-        <h3>Audio</h3>
-        <div class="cols">
-          <label class="field"><span>Sample rate</span><select name="sampleRate">
-            ${rateOpt('native', 'Device native')}${rateOpt(48000, '48,000 Hz')}${rateOpt(44100, '44,100 Hz')}${rateOpt(22050, '22,050 Hz')}${rateOpt(16000, '16,000 Hz')}
-          </select><small id="rate-note"></small></label>
-          <label class="field"><span>Bit depth</span><select name="bitDepth">
-            ${[16, 24, 32].map((b) => `<option value="${b}" ${Number(settings.bitDepth) === b ? 'selected' : ''}>${b === 32 ? '32-bit float' : b + '-bit'}</option>`).join('')}
-          </select></label>
+        <h3>Protocol and audio</h3>
+        <div class="sum">
+          <div class="sum-row"><span class="sum-k">Protocol</span><span class="sum-v" id="sum-proto"></span><button type="button" class="link-btn" data-menu="protocol">Change</button></div>
+          <div class="sum-row"><span class="sum-k">Microphone</span><span class="sum-v" id="sum-mic"></span><button type="button" class="link-btn" data-menu="mic">Change</button></div>
+          <div class="sum-row"><span class="sum-k">Recording</span><span class="sum-v" id="sum-rec"></span><button type="button" class="link-btn" data-menu="recording">Change</button></div>
         </div>
-        <div class="cols">
-          <label class="field"><span>Pre-roll</span><select name="prerollMs">
-            ${[0, 250, 500].map((v) => `<option value="${v}" ${Number(settings.prerollMs) === v ? 'selected' : ''}>${v} ms</option>`).join('')}</select></label>
-          <label class="field"><span>Post-roll</span><select name="postrollMs">
-            ${[0, 250, 500].map((v) => `<option value="${v}" ${Number(settings.postrollMs) === v ? 'selected' : ''}>${v} ms</option>`).join('')}</select></label>
-        </div>
-        <label class="check"><input type="checkbox" name="autoAdvance" ${settings.autoAdvance ? 'checked' : ''}> <span>In per-token tasks, go to the next slide when a recording is stopped</span></label>
+        <div id="task-pick"></div>
       </section>
       <div class="actions"><button class="btn primary big" type="submit">Continue to consent</button></div>
     </form></div>`, 'scroll');
   bindBack();
   const form = $('#setup');
-  let proto = null;
-  const pick = async () => {
-    const entry = list.find((p) => p.id === form.protocol.value);
-    if (!entry) return;
+  let proto = null, protoId = null;
+  const refresh = async () => {
+    if (!$('#setup')) return;
+    $('#sum-mic').textContent = `${micLabel()} · ${audioSummary()}`;
+    $('#sum-rec').textContent = recordingSummary();
+    const entry = await currentProtocol();
+    if (!entry) {
+      proto = null; protoId = null;
+      $('#sum-proto').textContent = 'None';
+      $('#task-pick').innerHTML = '<div class="notice warn">There is no protocol yet. Tap Change to create or import one.</div>';
+      return;
+    }
+    $('#sum-proto').textContent = entry.title;
+    if (entry.id === protoId && proto) return;
+    protoId = entry.id;
     try {
       proto = await loadProtocolEntry(entry);
       $('#task-pick').innerHTML = `<div class="field"><span>Tasks</span><div class="chips">
@@ -655,15 +930,8 @@ async function screenSetup(preselect) {
         </div></div>${proto.warnings.map((w) => `<div class="notice warn">${esc(w)}</div>`).join('')}`;
     } catch (err) { proto = null; $('#task-pick').innerHTML = `<div class="notice warn">Couldn’t read the protocol: ${esc(err.message)}</div>`; }
   };
-  form.protocol.addEventListener('change', pick);
-  await pick();
-  const rateNote = () => {
-    const v = form.sampleRate.value;
-    const n = engine.sampleRate;
-    $('#rate-note').textContent = v === 'native' ? (n ? `Will record at ${n} Hz` : 'Usually 48,000 Hz on iPad')
-      : n && Number(v) > n ? `Above the real capture rate (${n} Hz): adds no information` : n && Number(v) !== n ? `Will be resampled from ${n} Hz` : '';
-  };
-  form.sampleRate.addEventListener('change', rateNote); rateNote();
+  $$('[data-menu]', form).forEach((b) => b.addEventListener('click', () => openMenu(b.dataset.menu, refresh)));
+  await refresh();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -671,17 +939,9 @@ async function screenSetup(preselect) {
     const fd = new FormData(form);
     const chosen = fd.getAll('task').map(Number);
     if (!chosen.length) return toast('Choose at least one task', 'err');
-    settings = {
-      ...settings,
-      sampleRate: fd.get('sampleRate') === 'native' ? 'native' : Number(fd.get('sampleRate')),
-      bitDepth: Number(fd.get('bitDepth')), prerollMs: Number(fd.get('prerollMs')), postrollMs: Number(fd.get('postrollMs')),
-      autoAdvance: !!fd.get('autoAdvance'), researcher: fd.get('researcher'), location: fd.get('location'),
-    };
+    settings = { ...settings, researcher: fd.get('researcher'), location: fd.get('location') };
     saveSettings(settings);
-    try {
-      await engine.open();
-      await engine.ensureRunning();
-    } catch (err) { return toast('Couldn’t open the microphone: ' + err.message, 'err'); }
+    try { await openMic(); } catch (err) { return toast('Couldn’t open the microphone: ' + err.message, 'err'); }
     try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (_) {}
     const participant = safeName(fd.get('participant'));
     const sessionLabel = safeName(fd.get('session')) || 's1';
@@ -750,7 +1010,6 @@ function screenConsent(proto, session, chosen) {
       await db.deleteSession(session.id);
       await db.audit('consent_declined', { sessionId: session.id, participant: session.participant, deletedFiles: true });
     }
-    engine.close();
     go('home');
   });
   $('#c-go').addEventListener('click', async () => {
@@ -820,19 +1079,22 @@ function startRun(proto, session, chosen) {
 
 function renderRunnerShell() {
   setScreen(`<div class="runner">
-    <header class="rbar">
-      <button class="icon-btn" id="r-menu" aria-label="Menu">☰</button>
-      <div class="rtitle"><span id="r-task"></span><span id="r-prog" class="muted"></span></div>
-      <div class="recind" id="r-ind"><span class="dot"></span><span id="r-time">00:00</span></div>
-      <div class="meter"><div class="fill"></div></div>
+    <header class="rtop">
+      <div class="rprog"><div id="r-progbar"></div></div>
+      <button class="rend" id="r-menu" aria-label="Session menu">${I.x}End</button>
+      <div class="rcount"><span class="recind" id="r-ind"><span class="dot"></span><span id="r-time">00:00</span></span><span id="r-prog"></span></div>
     </header>
     <div class="banner hidden" id="r-banner"></div>
     <section class="stage" id="r-stage"><div class="slide" id="r-slide"><div class="content" id="r-content"></div></div></section>
     <footer class="cbar">
-      <button class="nav" id="r-prev">‹ Previous</button>
-      <div class="cmid"><div id="r-status" class="rstatus"></div><button class="recbtn" id="r-rec" aria-label="Record"><span></span></button></div>
-      <button class="nav next" id="r-next">Next ›</button>
-    </footer></div>`, 'run');
+      <div class="cbtns">
+        <button class="sq" id="r-prev" aria-label="Previous">${I.chevL}</button>
+        <button class="recbtn" id="r-rec" aria-label="Record"><span></span></button>
+        <button class="sq next" id="r-next" aria-label="Next">${I.chevR}</button>
+      </div>
+      <div id="r-status" class="rstatus"></div>
+    </footer>
+    <div class="meter edge" aria-hidden="true"><div class="fill"></div></div></div>`, 'run');
   $('#r-menu').addEventListener('click', runnerMenu);
   $('#r-prev').addEventListener('click', () => navigate(-1));
   $('#r-next').addEventListener('click', () => navigate(1));
@@ -867,7 +1129,6 @@ function closeMark() {
 function showSlide() {
   const t = curTask();
   const total = t.seq.length;
-  $('#r-task').textContent = t.task.title;
   const content = $('#r-content');
   const slideEl = $('#r-slide');
   slideEl.className = 'slide';
@@ -938,30 +1199,44 @@ function updateControls() {
   const tokenRec = run.rec && run.rec.kind === 'token';
   const curSlide = inSlide ? t.seq[run.si].slide : null;
   const isQ = !!curSlide && curSlide.kind === 'question';
-  recBtn.classList.toggle('hidden', !(inSlide && mode === 'per_token' && !isQ));
+  recBtn.classList.toggle('hidden', !inSlide);
+  recBtn.classList.toggle('ghosted', inSlide && !(mode === 'per_token' && !isQ));
+  prev.classList.toggle('hidden', !inSlide);
   recBtn.classList.toggle('on', !!tokenRec);
+  recBtn.setAttribute('aria-label', tokenRec ? 'Stop recording' : 'Record');
   recBtn.disabled = run.busy;
   prev.disabled = run.busy || run.phase !== 'slide' || run.si === 0;
   next.disabled = run.busy;
-  next.textContent = run.phase === 'intro' ? 'Start ›' : run.phase === 'done' ? (run.tasks[run.ti + 1] ? 'Next task ›' : 'Finish ›')
-    : run.si === t.seq.length - 1 ? 'Finish task ›' : 'Next ›';
-  $('#r-ind').classList.toggle('on', !!run.rec);
+  const label = run.phase === 'intro' ? 'Start' : run.phase === 'done' ? (run.tasks[run.ti + 1] ? 'Next task' : 'Finish')
+    : run.si === t.seq.length - 1 ? 'Finish task' : '';
+  if (next.dataset.label !== label) { // replacing the content mid-tap would swallow the click
+    next.dataset.label = label;
+    next.innerHTML = label ? `<span>${esc(label)}</span>${I.chevR}` : I.chevR;
+    next.classList.toggle('labeled', !!label);
+    next.setAttribute('aria-label', label || 'Next');
+  }
+  $('#r-ind').classList.toggle('on', !!run.rec && run.rec.kind === 'continuous');
   if (run.busy) status.textContent = 'Saving…';
   else if (isQ) {
     const ok = isAnswered(curSlide, run.answers[takeKey()]);
     status.innerHTML = ok ? '<span class="good">✓ Answered</span>' : curSlide.required ? 'Answer to continue' : 'Optional question';
   } else if (inSlide && mode === 'per_token') {
     const n = run.takes[takeKey()] || 0;
-    status.innerHTML = tokenRec ? '<b class="rec-t">Recording</b>' : n ? `<span class="good">✓ Take ${n} saved</span>` : 'Tap to record';
-  } else if (inSlide && isCont(t)) status.innerHTML = '<b class="rec-t">Continuous recording</b>';
+    status.innerHTML = tokenRec ? '<span class="rec-t">Recording · <span id="r-tt">0.0</span> s</span>'
+      : n ? `Take ${n} saved · tap the red button to record again` : 'Tap the red button to record';
+  } else if (inSlide && isCont(t)) status.innerHTML = '<span class="rec-t">Recording continuously</span>';
   else if (inSlide && mode === 'none') status.textContent = 'Not recording';
   else status.textContent = '';
+  const bar = $('#r-progbar');
+  if (bar) bar.style.width = (run.phase === 'intro' ? 0 : run.phase === 'done' ? 100 : ((run.si + 1) / t.seq.length) * 100) + '%';
 }
 
 function updateClock() {
+  if (!run) return;
   const el = $('#r-time');
-  if (!el || !run) return;
-  el.textContent = run.rec ? fmtClock((Date.now() - run.rec.startedAt) / 1000) : '00:00';
+  if (el) el.textContent = run.rec && run.rec.kind === 'continuous' ? fmtClock((Date.now() - run.rec.startedAt) / 1000) : '00:00';
+  const tt = $('#r-tt');
+  if (tt && run.rec) tt.textContent = ((Date.now() - run.rec.startedAt) / 1000).toFixed(1);
 }
 
 const takeKey = () => `${run.ti}:${run.si}`;
@@ -1136,7 +1411,7 @@ async function runnerMenu() {
     <button class="btn" data-a="skip">Skip to the end of this task</button>
     <button class="btn" data-a="mic">Reopen microphone</button>
     <button class="btn danger" data-a="end">End session</button>
-    <button class="btn ghost" data-a="close">Back</button></div>`;
+    <button class="btn ghost" data-a="close">Continue the session</button></div>`;
   document.body.appendChild(m);
   m.addEventListener('click', async (e) => {
     const a = e.target.closest('[data-a]'); if (!a) return;
@@ -1168,11 +1443,9 @@ async function finishSession(status) {
   releaseWake();
   stopMeterLoop();
   run = null;
-  engine.close();
   const files = await db.fileMeta(s.id);
-  setScreen(`<div class="page">
-    <header class="topbar"><div></div><h2>Session ${status === 'complete' ? 'complete' : 'ended'}</h2><div></div></header>
-    <section class="panel center">
+  setScreen(`<div class="page"><section class="panel center done-panel">
+      <h2 class="sh-title">Session ${status === 'complete' ? 'complete' : 'ended'}</h2>
       <h3>${esc(s.participant)} · ${esc(s.session)}</h3>
       <p>${plural(files.filter((f) => f.kind === 'wav').length, 'audio file', 'audio files')} · ${fmtBytes(files.reduce((a, f) => a + f.size, 0))}</p>
       <p class="muted">The recordings only exist on this device. Export the session now to the storage approved by your IRB.</p>
@@ -1198,14 +1471,19 @@ async function resumeAudio() {
   } catch (e) { toast('Couldn’t resume audio: ' + e.message, 'err'); }
 }
 engine.onState((st) => {
-  if (!run) return;
+  if (!run) { if (st === 'track-ended' && $('#home')) renderMicCard(); return; }
   if (st === 'interrupted' || st === 'suspended' || st === 'track-ended') {
     logEvent('audio_interrupted', { state: st });
     showBanner(run.rec ? 'Audio was interrupted and part of the recording is missing. Tap here to resume.' : 'Audio paused. Tap here to resume.');
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if (!run) return;
+  if (!run) {
+    if (document.visibilityState === 'hidden') { if (engine.ctx) engine.close(); }
+    else if (sheet && sheet.page === 'mic') renderMenu('mic');
+    else if ($('#home')) { renderMicCard(); autoMic(); }
+    return;
+  }
   if (document.visibilityState === 'hidden') logEvent('app_hidden');
   else {
     logEvent('app_visible');
@@ -1214,9 +1492,18 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// A microphone or audio interface was plugged in or out
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    if (run) return;
+    if (sheet && sheet.page === 'mic') renderMenu('mic');
+    else if ($('#home')) renderMicCard();
+  });
+}
+
 // Keyboard or presentation remote (arrows / Page Down / Page Up / space)
 document.addEventListener('keydown', (e) => {
-  if (!run || document.querySelector('.modal-back')) return;
+  if (!run || document.querySelector('.modal-back, .sheet-back')) return;
   if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return; // typing an answer
   const k = e.key;
   if (['ArrowRight', 'PageDown', 'ArrowDown'].includes(k)) { e.preventDefault(); navigate(1); }
@@ -1228,47 +1515,7 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'Escape') runnerMenu();
 });
 
-// ---------- SESSIONS AND EXPORT ----------
-async function screenSessions() {
-  const sessions = (await db.all('sessions')).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const metas = await Promise.all(sessions.map((s) => db.fileMeta(s.id)));
-  const statusLbl = { complete: 'complete', incomplete: 'incomplete', in_progress: 'interrupted', consent: 'not started' };
-  setScreen(`<div class="page">${backBar('Sessions', `<button class="btn" id="audit">Log</button>`)}
-    <div class="list">${sessions.map((s, i) => {
-      const f = metas[i]; const size = f.reduce((a, x) => a + x.size, 0);
-      return `<div class="item" data-id="${esc(s.id)}">
-        <div class="item-main">
-          <div class="item-t">${esc(s.participant)} · ${esc(s.session)} <span class="tag ${s.exportedAt ? 'ok' : 'warn'}">${s.exportedAt ? 'exported' : 'not exported'}</span></div>
-          <div class="item-s">${fmtDate(s.createdAt)} · ${esc(s.protocol.title)} · ${plural(f.filter((x) => x.kind === 'wav').length, 'audio file', 'audio files')} · ${fmtBytes(size)} · ${statusLbl[s.status] || s.status}</div>
-          <div class="share-slot"></div>
-        </div>
-        <div class="item-actions">
-          <button class="btn primary" data-exp>Export</button>
-          <button class="btn ghost danger-t" data-del>Delete</button>
-        </div></div>`;
-    }).join('') || '<p class="muted pad">No sessions yet.</p>'}</div></div>`, 'scroll');
-  bindBack();
-  $$('.item[data-id]').forEach((el) => {
-    const id = el.dataset.id;
-    $('[data-exp]', el).addEventListener('click', () => prepareExport(id, $('.share-slot', el)));
-    $('[data-del]', el).addEventListener('click', async () => {
-      const s = sessions.find((x) => x.id === id);
-      const ok = await modal({
-        title: `Delete ${s.participant} · ${s.session}`,
-        body: s.exportedAt ? `<p>Last exported ${fmtDate(s.exportedAt)}.</p>` : '<p><b>This session has never been exported.</b> If you delete it, the recordings will be lost.</p>',
-        ok: 'Delete from device', danger: true,
-        requireCheck: 'I have checked that the export is saved somewhere safe',
-      });
-      if (!ok) return;
-      const n = await db.deleteSession(id);
-      await db.audit('session_deleted', { sessionId: id, participant: s.participant, files: n, wasExported: !!s.exportedAt });
-      toast('Session deleted');
-      screenSessions();
-    });
-  });
-  $('#audit').addEventListener('click', screenAudit);
-}
-
+// ---------- ACTIVITY LOG AND EXPORT ----------
 async function screenAudit() {
   const rows = (await db.all('audit')).reverse();
   const lbl = { session_created: 'Session created', session_completed: 'Session completed', session_ended_early: 'Session ended early',
@@ -1301,7 +1548,7 @@ function sessionJSON(s, files) {
   return { ...rest, files: files.map(({ blob, data, sessionId, ...f }) => f) };
 }
 
-const README_TXT = (s) => `Fieldrec ${APP_VERSION} export
+const README_TXT = (s) => `FieldRec ${APP_VERSION} export
 Participant: ${s.participant} · Session: ${s.session} · Date: ${s.createdAt}
 Protocol: ${s.protocol.title}
 

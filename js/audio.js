@@ -49,9 +49,20 @@ export class AudioEngine {
   }
 
   async _openStream() {
+    // Tells iOS that the page records: it then routes the input to a connected USB interface or headset
+    // instead of always using the built-in microphone (WebKit bug 282939).
+    try { if (navigator.audioSession && navigator.audioSession.type !== 'play-and-record') navigator.audioSession.type = 'play-and-record'; } catch (_) {}
     const audio = { ...REQUESTED_CONSTRAINTS };
     if (this.deviceId) audio.deviceId = { exact: this.deviceId };
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    } catch (e) {
+      // the chosen input was unplugged: fall back to the default one
+      if (!this.deviceId || !/Overconstrained|NotFound/i.test(e.name || '')) throw e;
+      this.deviceId = null;
+      delete audio.deviceId;
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    }
     this.track = this.stream.getAudioTracks()[0];
     this.track.addEventListener('ended', () => this._emitState('track-ended'));
 
